@@ -1,0 +1,14 @@
+name = "secp256k1"
+version = "0.1.0"
+defaultTargets = ["Secp256k1"]
+testDriver = "tests"
+
+[[lean_lib]]
+name = "Secp256k1"
+
+[[lean_lib]]
+name = "Tests"
+
+[[lean_exe]]
+name = "tests"
+root = "Tests.Main"
