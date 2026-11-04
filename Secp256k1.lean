@@ -4,6 +4,7 @@ import Secp256k1.Primality
 import Secp256k1.Certificates
 import Secp256k1.SHA256
 import Secp256k1.Curve
+import Secp256k1.GroupLaw
 import Secp256k1.RFC6979
 import Secp256k1.CT.U256
 import Secp256k1.CT.Field
