@@ -1,27 +1,20 @@
 import Secp256k1
+import Tests.Harness
 import Tests.Vectors
+import Tests.CT
 
 /-!
 # Test suite
 
 Run with `lake test`. Vectors in `Tests/Vectors.lean` come from libsecp256k1
 and python-ecdsa (see `scripts/gen_test_vectors.py`); the remaining checks
-cover group laws, encodings and rejection of malformed inputs.
+cover group laws, encodings, rejection of malformed inputs, and the
+constant-time arithmetic against the reference implementation (`Tests/CT.lean`).
 -/
 
 open Secp256k1 Secp256k1.ECDSA
 
 namespace Tests
-
-/-- Number of passed checks and names of failed ones. -/
-abbrev TestM := StateT (Nat × Array String) IO
-
-def check (name : String) (ok : Bool) : TestM Unit :=
-  modify fun (passed, failed) => if ok then (passed + 1, failed) else (passed, failed.push name)
-
-def hex (s : String) : ByteArray := Hex.decode! s
-
-def section_ (title : String) : TestM Unit := IO.println s!"• {title}"
 
 /-! ## Hashing -/
 
@@ -184,8 +177,8 @@ def testRejection : TestM Unit := do
   check "s + n" (!pk.verify msg { sig with s := sig.s + n })
   check "recover r = 0" (PublicKey.recover? msg ⟨{ sig with r := 0 }, 0⟩).isNone
   check "compact wrong length" (Signature.ofCompact? (natToBytes 1 63)).isNone
-  check "signWithNonce k = 0" (signWithNonce sk 1 0).isNone
-  check "signWithNonce k = n" (signWithNonce sk 1 n).isNone
+  check "signWithNonce k = 0" (signWithNonce sk 1 CT.Scalar.zero).isNone
+  check "scalar k = n rejected" (CT.Scalar.ofBytes? (natToBytes n 32)).isNone
   -- Strict DER (BIP 66).
   let der := sig.toDER
   check "DER roundtrip" (Signature.ofDER? der == some sig)
@@ -231,7 +224,8 @@ def main : IO UInt32 := do
       testLibsecp256k1
       testPythonEcdsa
       testRejection
-      testRandomKeys : TestM Unit).run (0, #[])
+      testRandomKeys
+      testConstantTime : TestM Unit).run (0, #[])
   let elapsed := (← IO.monoMsNow) - start
   for name in failed do
     IO.eprintln s!"FAILED: {name}"

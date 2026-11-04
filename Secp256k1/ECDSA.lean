@@ -3,6 +3,7 @@ import Secp256k1.Field
 import Secp256k1.SHA256
 import Secp256k1.Curve
 import Secp256k1.RFC6979
+import Secp256k1.CT.Point
 
 /-!
 # ECDSA over secp256k1
@@ -17,35 +18,50 @@ and the compact (64-byte) and strict DER (BIP 66) signature encodings.
 
 Signatures produced with the default options are byte-for-byte identical to
 those of libsecp256k1's `secp256k1_ecdsa_sign`.
+
+## Side channels
+
+Operations on secrets (key derivation and signing) use the constant-time
+arithmetic of `Secp256k1.CT`: the private key and the nonce are kept as
+fixed-width limbs or bytes and never converted to `Nat`, and `k • G` uses
+complete formulas with a fixed-window, fixed-length ladder. Values are
+converted to `Nat` only once they are public (`R`, `r`, `s`).
+
+Verification and recovery only involve public data and use the faster,
+variable-time reference arithmetic of `Secp256k1.Curve`.
 -/
 
 namespace Secp256k1.ECDSA
 
 /-! ## Keys -/
 
-/-- A private key: a scalar `d ∈ [1, n-1]`. -/
+/-- A private key: a scalar `d ∈ [1, n-1]`, stored as constant-time limbs.
+(`d < n` is the invariant of `CT.Scalar`; `d ≠ 0` is checked on construction.) -/
 structure PrivateKey where
-  d : Nat
-  isValid : 0 < d ∧ d < n
+  scalar : CT.Scalar
+  isNonzero : scalar.isZero = 0
 
 /-- Private keys are deliberately not printed. -/
 instance : Repr PrivateKey := ⟨fun _ _ => "<PrivateKey>"⟩
 
 namespace PrivateKey
 
-/-- A private key from a scalar, if it lies in `[1, n-1]`. -/
-def ofNat? (d : Nat) : Option PrivateKey :=
-  if h : 0 < d ∧ d < n then some ⟨d, h⟩ else none
-
-/-- A private key from its 32-byte big-endian encoding. -/
+/-- A private key from its 32-byte big-endian encoding, if it lies in
+`[1, n-1]`. The range check is constant time; only its outcome is revealed. -/
 def ofBytes? (bs : ByteArray) : Option PrivateKey :=
-  if bs.size = 32 then ofNat? (bytesToNat bs) else none
+  match CT.Scalar.ofBytes? bs with
+  | none => none
+  | some s => if h : s.isZero = 0 then some ⟨s, h⟩ else none
 
-/-- The 32-byte big-endian encoding of the scalar. -/
-def toBytes (sk : PrivateKey) : ByteArray := natToBytes sk.d 32
+/-- A private key from a natural number, if it lies in `[1, n-1]`.
 
-theorem toBytes_size (sk : PrivateKey) : sk.toBytes.size = 32 := by
-  simp [toBytes, natToBytes_size]
+**Not constant time**: the key passes through `Nat`. Convenient for tests and
+examples; prefer `ofBytes?` for real keys. -/
+def ofNat? (d : Nat) : Option PrivateKey :=
+  if d < n then ofBytes? (natToBytes d 32) else none
+
+/-- The 32-byte big-endian encoding of the scalar. Constant time. -/
+def toBytes (sk : PrivateKey) : ByteArray := sk.scalar.toBytes
 
 /-- Generate a private key from `IO.getRandomBytes` by rejection sampling.
 
@@ -88,9 +104,9 @@ def toBytes (pk : PublicKey) (compressed : Bool := true) : ByteArray :=
 
 end PublicKey
 
-/-- The public key `Q = d • G`. -/
+/-- The public key `Q = d • G`, computed with constant-time scalar multiplication. -/
 def PrivateKey.publicKey (sk : PrivateKey) : PublicKey :=
-  match PublicKey.ofPoint? (sk.d • G) with
+  match PublicKey.ofPoint? (CT.PPoint.smulG sk.scalar).toPoint with
   | some pk => pk
   | none => panic! "unreachable: d • G is a valid point for d ∈ [1, n-1]"
 
@@ -178,25 +194,28 @@ end Signature
 /-- The message representative `e = bits2int(h) mod n` (SEC 1 §4.1.3 step 5). -/
 def hashToScalar (h : ByteArray) : Nat := RFC6979.bits2int h % n
 
-/-- Core of the signing algorithm with an explicit nonce `k`. Returns `none` if
-`k ∉ [1, n-1]` or if `r = 0` or `s = 0` (in which case a new nonce is needed).
+/-- Core of the signing algorithm with an explicit nonce `k` (and public
+message representative `e`). Returns `none` if `k = 0`, or if `r = 0` or
+`s = 0` (in which case a new nonce is needed).
+
+`k • G`, `k⁻¹` and `k⁻¹ · (e + r·d)` are computed in constant time; `R`, `r`
+and `s` are converted to `Nat` only once computed, as they are published.
 
 **Never reuse a nonce across different messages**: two signatures with the
 same `k` reveal the private key. Prefer `PrivateKey.signHash`. -/
-def signWithNonce (sk : PrivateKey) (e k : Nat) (lowS : Bool := true) :
+def signWithNonce (sk : PrivateKey) (e : Nat) (k : CT.Scalar) (lowS : Bool := true) :
     Option RecoverableSignature :=
-  if ¬(0 < k ∧ k < n) then none
+  if k.isZero == 1 then none
   else
-    match k • G with
+    match (CT.PPoint.smulG k).toPoint with
     | .infinity => none
     | .affine x y =>
       let r := x.val % n
-      let s : Fn := Fn.inv (Fn.ofNat k) * (Fn.ofNat e + Fn.ofNat r * Fn.ofNat sk.d)
+      let s := (k.inv * (CT.Scalar.ofNat e + CT.Scalar.ofNat r * sk.scalar)).toNat
       let recId : Nat := (if y.isOdd then 1 else 0) + (if x.val ≥ n then 2 else 0)
-      if r = 0 ∨ s.val = 0 then none
+      if r = 0 ∨ s = 0 then none
       else
-        let (s, recId) :=
-          if lowS && s.val > n / 2 then (n - s.val, recId ^^^ 1) else (s.val, recId)
+        let (s, recId) := if lowS && s > n / 2 then (n - s, recId ^^^ 1) else (s, recId)
         some ⟨⟨r, s⟩, Fin.ofNat 4 recId⟩
 
 namespace PrivateKey
@@ -212,7 +231,9 @@ happens with negligible probability. -/
 def signHashRecoverable (sk : PrivateKey) (h : ByteArray) (lowS : Bool := true)
     (extraEntropy : ByteArray := .empty) : Option RecoverableSignature :=
   let e := hashToScalar h
-  RFC6979.findNonce (signWithNonce sk e · lowS) 64 (RFC6979.init sk.d h extraEntropy)
+  RFC6979.findNonce
+    (fun T => (CT.Scalar.ofBytes? T).bind (signWithNonce sk e · lowS))
+    64 (RFC6979.init sk.toBytes h extraEntropy)
 
 /-- Sign a message digest. See `signHashRecoverable`. -/
 def signHash (sk : PrivateKey) (h : ByteArray) (lowS : Bool := true)

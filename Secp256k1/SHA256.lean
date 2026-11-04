@@ -88,7 +88,9 @@ def hash (msg : ByteArray) : ByteArray :=
   let m := pad msg
   let state := (List.range (m.size / blockSize)).foldl
     (fun st i => compress st m (blockSize * i)) H0
-  state.foldl (fun out word => out ++ natToBytes word.toNat 4) .empty
+  state.foldl (init := .emptyWithCapacity digestSize) fun out (w : UInt32) =>
+    out.push (w >>> 24).toUInt8 |>.push (w >>> 16).toUInt8 |>.push (w >>> 8).toUInt8
+      |>.push w.toUInt8
 
 /-- HMAC-SHA-256 (RFC 2104) with the given key and message. -/
 def hmac (key msg : ByteArray) : ByteArray :=
