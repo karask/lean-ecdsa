@@ -1,5 +1,6 @@
 import Secp256k1.CT.Lemmas
 import Secp256k1.CT.Field
+import Secp256k1.Certificates
 
 /-!
 # Correctness of the constant-time arithmetic
@@ -22,10 +23,12 @@ the intended values:
 * `Fe.add_spec`, `Fe.sub_spec`, `Fe.neg_spec`, `Fe.mul_spec`, `Fe.inv_spec`:
   field arithmetic modulo `p` on canonical values; `inv` computes `a^(p-2) mod p`.
 
+* `Fe.mul_inv`, `Scalar.mul_inv`: inversion is correct, `a · a⁻¹ = 1` for
+  `a ≠ 0`, using Fermat's little theorem for the primes `p` and `n`
+  (`Secp256k1.Certificates`).
+
 These theorems depend only on the standard axioms (`propext`,
-`Classical.choice`, `Quot.sound`). Not covered: that `a^(m-2)` is the inverse
-(Fermat's little theorem, which needs `p` and `n` to be prime), and the point
-formulas.
+`Classical.choice`, `Quot.sound`). Not covered: the point formulas.
 -/
 
 namespace Secp256k1.CT
@@ -650,17 +653,6 @@ theorem Modulus.mul_repr (M : Modulus) (hM : M.Valid) {x y : U256} {v w : Nat}
 theorem Modulus.one_repr (M : Modulus) (hM : M.Valid) : M.Repr M.one 1 := by
   refine ⟨hM.one_valid, ?_⟩; rw [hM.one_eq, Nat.one_mul]
 
-theorem pow_step_one (v α e i : Nat) (hb : e / 2 ^ i % 2 = 1) :
-    (v * v * α) ^ 2 ^ i * α ^ (e % 2 ^ i) = v ^ 2 ^ (i + 1) * α ^ (e % 2 ^ (i + 1)) := by
-  rw [Nat.mod_pow_succ, hb, Nat.mul_one, Nat.pow_succ 2 i, Nat.pow_mul, Nat.pow_two,
-    Nat.pow_add, Nat.mul_pow, Nat.mul_pow]
-  ac_rfl
-
-theorem pow_step_zero (v α e i : Nat) (hb : e / 2 ^ i % 2 = 0) :
-    (v * v) ^ 2 ^ i * α ^ (e % 2 ^ i) = v ^ 2 ^ (i + 1) * α ^ (e % 2 ^ (i + 1)) := by
-  rw [Nat.mod_pow_succ, hb, Nat.mul_zero, Nat.pow_succ 2 i, Nat.pow_mul,
-    Nat.pow_two, Nat.mul_pow, Nat.add_zero]
-
 /-- The square-and-multiply loop: after processing the low `i` bits of `e`
 starting from a representative of `v`, the result represents
 `v^(2^i) · α^(e mod 2^i)`. -/
@@ -775,5 +767,25 @@ theorem Fe.neg_spec (a : Fe) (ha : a.Valid) :
   have hr := pMod.sub_repr hM hzero (a.repr ha) halt
   rw [Nat.zero_add] at hr
   exact ⟨⟨hr.1, hr.lt hM⟩, (pMod.fromMont_repr hM hr).2⟩
+
+/-! ### Inversion -/
+
+/-- **Field inversion is correct**: `a · a⁻¹ = 1` in `𝔽ₚ` for `a ≠ 0`. -/
+theorem Fe.mul_inv (a : Fe) (ha : a.Valid) (h0 : a.toNat ≠ 0) : (a * Fe.inv a).toNat = 1 := by
+  have ⟨iv, ie⟩ := Fe.inv_spec a ha
+  have ⟨_, me⟩ := Fe.mul_spec a (Fe.inv a) ha iv
+  have halt : a.toNat < p := (pMod.fromMont_spec pMod_valid a.mont ha.1).2.1
+  have hp := p_isPrime.1
+  rw [me, ie, Nat.mul_mod_mod, ← Nat.pow_succ', show (p - 2).succ = p - 1 by omega]
+  exact fermat_p _ (by omega) halt
+
+/-- **Scalar inversion is correct**: `a · a⁻¹ = 1` modulo `n` for `a ≠ 0`. -/
+theorem Scalar.mul_inv (a : Scalar) (ha : a.Valid) (h0 : a.toNat ≠ 0) :
+    (a * Scalar.inv a).toNat = 1 := by
+  have ⟨iv, ie⟩ := Scalar.inv_spec a ha
+  have ⟨_, me⟩ := Scalar.mul_spec a (Scalar.inv a) ha iv
+  have hn := n_isPrime.1
+  rw [me, ie, Nat.mul_mod_mod, ← Nat.pow_succ', show (n - 2).succ = n - 1 by omega]
+  exact fermat_n _ (by omega) ha.2
 
 end Secp256k1.CT
