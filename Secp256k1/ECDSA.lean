@@ -4,6 +4,7 @@ import Secp256k1.SHA256
 import Secp256k1.Curve
 import Secp256k1.RFC6979
 import Secp256k1.CT.Point
+import Secp256k1.CT.Sign
 
 /-!
 # ECDSA over secp256k1
@@ -51,7 +52,7 @@ namespace PrivateKey
 def ofBytes? (bs : ByteArray) : Option PrivateKey :=
   match CT.Scalar.ofBytes? bs with
   | none => none
-  | some s => if h : s.isZero = 0 then some ⟨s, h⟩ else none
+  | some s => if h : CT.declassify s.isZero = 0 then some ⟨s, h⟩ else none
 
 /-- A private key from a natural number, if it lies in `[1, n-1]`.
 
@@ -194,29 +195,27 @@ end Signature
 /-- The message representative `e = bits2int(h) mod n` (SEC 1 §4.1.3 step 5). -/
 def hashToScalar (h : ByteArray) : Nat := RFC6979.bits2int h % n
 
-/-- Core of the signing algorithm with an explicit nonce `k` (and public
-message representative `e`). Returns `none` if `k = 0`, or if `r = 0` or
-`s = 0` (in which case a new nonce is needed).
+/-- Sign with an explicit nonce `k` (and public message representative `e`).
+Returns `none` if `k = 0`, or if `r = 0` or `s = 0` (in which case a new nonce
+is needed).
 
-`k • G`, `k⁻¹` and `k⁻¹ · (e + r·d)` are computed in constant time; `R`, `r`
-and `s` are converted to `Nat` only once computed, as they are published.
+Everything involving `d` and `k` happens in `CT.signCore`, without
+secret-dependent branches. Its outputs (`r`, `s`, the recovery id and the
+success flag) are then declassified, since they are published as the
+signature, and only then converted to `Nat`.
 
 **Never reuse a nonce across different messages**: two signatures with the
 same `k` reveal the private key. Prefer `PrivateKey.signHash`. -/
 def signWithNonce (sk : PrivateKey) (e : Nat) (k : CT.Scalar) (lowS : Bool := true) :
     Option RecoverableSignature :=
-  if k.isZero == 1 then none
+  let core := CT.declassify (CT.signCore sk.scalar k (CT.Scalar.ofNat e))
+  if core.ok == 0 then none
   else
-    match (CT.PPoint.smulG k).toPoint with
-    | .infinity => none
-    | .affine x y =>
-      let r := x.val % n
-      let s := (k.inv * (CT.Scalar.ofNat e + CT.Scalar.ofNat r * sk.scalar)).toNat
-      let recId : Nat := (if y.isOdd then 1 else 0) + (if x.val ≥ n then 2 else 0)
-      if r = 0 ∨ s = 0 then none
-      else
-        let (s, recId) := if lowS && s > n / 2 then (n - s, recId ^^^ 1) else (s, recId)
-        some ⟨⟨r, s⟩, Fin.ofNat 4 recId⟩
+    let r := core.r.toNat
+    let s := core.s.toNat
+    let recId := core.recId.toNat
+    let (s, recId) := if lowS && s > n / 2 then (n - s, recId ^^^ 1) else (s, recId)
+    some ⟨⟨r, s⟩, Fin.ofNat 4 recId⟩
 
 namespace PrivateKey
 

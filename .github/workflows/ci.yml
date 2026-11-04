@@ -12,3 +12,17 @@ jobs:
       - uses: leanprover/lean-action@v1
         with:
           test: true
+
+  # Constant-time check of the compiled code under valgrind (see ctgrind/README.md).
+  ctgrind:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install elan and valgrind
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          sudo apt-get update && sudo apt-get install -y valgrind
+      - name: Run ctgrind
+        run: ./ctgrind/run.sh

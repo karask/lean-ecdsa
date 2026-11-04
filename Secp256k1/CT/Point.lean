@@ -118,7 +118,7 @@ time, so use this only once the result may be revealed (public keys, the
 nonce point `R` of a signature, whose coordinates are published as `r` and
 the recovery id). -/
 def toPoint (P : PPoint) : Point :=
-  let (x, y, inf) := P.toAffine
+  let (x, y, inf) := declassify P.toAffine
   if inf == 1 then .infinity else .affine x.toFp y.toFp
 
 /-- The 16 multiples `0·P, 1·P, …, 15·P`. -/

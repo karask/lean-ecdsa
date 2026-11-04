@@ -40,6 +40,13 @@ for `x ≠ 0` the top bit of `x ||| -x` is set. -/
 /-- All-ones if `a = b`, else zero. -/
 @[inline] def eqMask (a b : UInt64) : UInt64 := maskOf (isZeroBit (a ^^^ b))
 
+/-- Marks a value that is derived from secrets but is public by design, such
+as a signature component or whether a key is in range. It is the identity
+function. Every place where secret-derived data may influence control flow or
+be converted to `Nat` goes through `declassify`, so these places can be found
+with `grep` (the valgrind check in `ctgrind/` makes the same values public). -/
+@[inline] def declassify {α : Type} (a : α) : α := a
+
 /-- A 256-bit integer as eight little-endian 32-bit limbs (each `< 2³²`). -/
 structure U256 where
   l0 : UInt64

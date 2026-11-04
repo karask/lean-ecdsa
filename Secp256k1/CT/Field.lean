@@ -82,17 +82,25 @@ def zero : Scalar := ⟨U256.zero⟩
 
 def one : Scalar := ⟨U256.one⟩
 
+/-- Reduce a 256-bit integer modulo `n`. Constant time. -/
+def reduce (a : U256) : Scalar := ⟨nMod.fromMont (nMod.toMont a)⟩
+
+/-- 32 big-endian bytes as limbs, and `1` if the value is `< n` (else `0`).
+Constant time. -/
+def ofBytesChecked (bs : ByteArray) : U256 × UInt64 :=
+  let v := U256.ofBytes bs
+  (v, U256.lt v nMod.m)
+
 /-- Parse 32 big-endian bytes, rejecting values `≥ n`. The comparison is
 constant time; only whether the input was in range is revealed. -/
 def ofBytes? (bs : ByteArray) : Option Scalar :=
   if bs.size ≠ 32 then none
   else
-    let v := U256.ofBytes bs
-    if U256.lt v nMod.m == 1 then some ⟨v⟩ else none
+    let (v, inRange) := ofBytesChecked bs
+    if declassify inRange == 1 then some ⟨v⟩ else none
 
 /-- From 32 big-endian bytes, reduced modulo `n`. Constant time. -/
-def ofBytesReduce (bs : ByteArray) : Scalar :=
-  ⟨nMod.fromMont (nMod.toMont (U256.ofBytes bs))⟩
+def ofBytesReduce (bs : ByteArray) : Scalar := reduce (U256.ofBytes bs)
 
 /-- 32 big-endian bytes. Constant time. -/
 def toBytes (a : Scalar) : ByteArray := a.val.toBytes
