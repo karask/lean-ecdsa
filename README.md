@@ -19,11 +19,15 @@ It includes:
 With the default options, signatures match libsecp256k1's `secp256k1_ecdsa_sign` byte for byte.
 
 > [!WARNING]
-> Side-channel hardening is in progress and the library is **not yet suitable for keys with real value**. The secret-dependent code passes a valgrind check of its machine code, and its field and scalar arithmetic is proved correct. However:
+> Hardening is well advanced, but the library is **not yet suitable for keys with real value**. What is done:
+> - The secret-dependent code passes a valgrind check of its machine code.
+> - Its field and scalar arithmetic, including inversion, is proved correct.
+> - It agrees with libsecp256k1 on 100,000 fuzzed inputs.
+>
+> However:
 > - secrets are not wiped from memory
-> - `PrivateKey.generate` relies on `IO.getRandomBytes`, which Lean does not guarantee to be cryptographically secure
-> - inversion and the point formulas are tested but not proved
-> - there are no fault-attack countermeasures
+> - the point formulas, and the fact that `a^(m-2)` is the inverse (Fermat's little theorem), are tested but not proved
+> - key generation depends on Lean's undocumented choice of randomness source (currently the OS generator)
 > - nothing has been audited
 >
 > See [what remains](#what-remains).
@@ -85,7 +89,7 @@ All ECDSA definitions live in `Secp256k1.ECDSA`.
 | `PrivateKey.publicKey` | The public key `d • G` (constant time) |
 | `PublicKey` | Point with a proof that it is on the curve and not `𝒪` |
 | `PublicKey.ofBytes?` / `toBytes (compressed := …)` | Parse or encode a SEC 1 public key |
-| `PrivateKey.sign` / `signHash` | Sign a message or a digest. Options: `lowS := true`, `extraEntropy := …` |
+| `PrivateKey.sign` / `signHash` | Sign a message or a digest. Options: `lowS := true`, `extraEntropy := …`, `verifyAfterSign := false` (fault countermeasure) |
 | `PrivateKey.signRecoverable` / `signHashRecoverable` | Same as above, also returning the recovery id |
 | `PublicKey.verify` / `verifyHash` | Verify a signature. Option: `requireLowS := false` |
 | `PublicKey.recover?` / `recoverHash?` | Recover the public key from a `RecoverableSignature` |
@@ -119,8 +123,9 @@ The type invariants mean that every `PrivateKey` is non-zero and every `PublicKe
   - `Modulus.mul_spec`: Montgomery multiplication returns the canonical `c < m` with `c · 2²⁵⁶ ≡ a · b (mod m)`, for any odd modulus satisfying `Modulus.Valid`
   - `Modulus.add_spec`, `Modulus.sub_spec`, `Modulus.toMont_spec`, `Modulus.fromMont_spec`: modular addition, subtraction and Montgomery conversion
   - `pMod_valid`, `nMod_valid`: the precomputed constants for `p` and `n` satisfy those assumptions
-  - `Scalar.mul_spec`, `Scalar.add_spec`, `Scalar.sub_spec`: arithmetic modulo `n`
-  - `Fe.mul_spec`, `Fe.add_spec`: arithmetic modulo `p`, on canonical values
+  - `Modulus.pow_repr`: square-and-multiply exponentiation in Montgomery form
+  - `Scalar.mul_spec`, `Scalar.add_spec`, `Scalar.sub_spec`, `Scalar.inv_spec`: arithmetic modulo `n`, where `inv` computes `a^(n-2) mod n`
+  - `Fe.mul_spec`, `Fe.add_spec`, `Fe.sub_spec`, `Fe.neg_spec`, `Fe.inv_spec`: arithmetic modulo `p` on canonical values, where `inv` computes `a^(p-2) mod p`
 
 These theorems depend only on Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`). Three standalone word lemmas in `Secp256k1.CT.Lemmas` use `bv_decide`, which additionally trusts compiled code; the theorems above don't depend on them.
 
@@ -165,11 +170,14 @@ Only after these points are values converted to `Nat` (`grep -rn declassify Secp
 
 ### What remains
 
-- **Memory hygiene and randomness.** Wiping secrets and using a vetted CSPRNG both need small C bindings. Lean's immutable, reference-counted values also make complete wiping hard.
-- **Proofs.** Prove that exponentiation and inversion, `Fe.sub` and `Fe.neg` are correct, and that the projective formulas implement the curve group law (for example against Mathlib's Weierstrass curves).
+- **Memory hygiene.** Secrets are not wiped. Lean values are immutable and reference-counted, so copies of the key and nonce limbs end up in freed memory. Wiping them needs runtime support, not just a C binding.
+- **Randomness.** In Lean v4.35.0, `IO.getRandomBytes` reads `/dev/urandom` on Unix-like systems and calls `BCryptGenRandom` on Windows (`src/runtime/io.cpp`). These are the operating system's cryptographic generators, but Lean doesn't document this as a guarantee, so re-check it when changing toolchains. A `getrandom(2)` binding would also wait for the kernel generator to be seeded at early boot.
+- **Proofs.**
+  - Prove that `a^(m-2)` is the inverse. This is Fermat's little theorem, which needs `p` and `n` to be proved prime, for example with Pratt certificates.
+  - Prove that the projective formulas implement the curve group law, for example against Mathlib's Weierstrass curves.
 - **Platforms.** The valgrind and timing checks cover x86-64 Linux with the bundled toolchain. Other platforms and compilers need their own runs.
-- **Fault attacks.** Offer verify-after-sign, and blind the scalar or base point.
-- **Assurance.** Add differential fuzzing against libsecp256k1, and get an independent audit.
+- **Fault attacks.** `verifyAfterSign := true` checks each signature before releasing it. Scalar or base-point blinding is not implemented.
+- **Assurance.** An independent audit.
 
 ## Building and testing
 
@@ -198,6 +206,23 @@ Side-channel checks (see above):
 lake exe timing          # dudect-style timing test
 ./ctgrind/run.sh         # valgrind machine-code check (needs valgrind)
 ```
+
+Differential fuzzing against libsecp256k1:
+
+```sh
+pip install coincurve
+lake build fuzz
+python3 scripts/fuzz_vs_libsecp256k1.py --count 20000 [--seed S]
+```
+
+The fuzzer compares the following on random, edge-biased and mutated inputs:
+- public key derivation
+- RFC 6979 signing, with and without additional data
+- verification of mutated DER signatures: bit flips, high-S twins, out-of-range and non-minimal integers, truncation, garbage
+- public key recovery
+- SEC 1 public key parsing
+
+100,000 cases over five seeds produced no disagreements. With the low-S check deliberately disabled, the fuzzer reports 101 mismatches within 3,000 cases. The one intentional difference is that libsecp256k1 accepts "hybrid" public keys (prefix `0x06`/`0x07`) and this library does not, so the fuzzer doesn't generate them.
 
 To regenerate the vectors:
 

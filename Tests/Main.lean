@@ -121,6 +121,7 @@ def checkLibsecp (priv msgHex pubC pubU sigHex derHex : String) (recId : Nat) : 
   check s!"{tag} DER parse" (Signature.ofDER? (hex derHex) == some sig)
   check s!"{tag} compact parse" (Signature.ofCompact? (hex sigHex) == some sig)
   check s!"{tag} sign = signRecoverable" (sk.sign msg == some sig)
+  check s!"{tag} verifyAfterSign" (sk.sign msg (verifyAfterSign := true) == some sig)
   check s!"{tag} low S" sig.isLowS
   check s!"{tag} verify" (pk.verify msg sig)
   check s!"{tag} verify strict" (pk.verify msg sig (requireLowS := true))

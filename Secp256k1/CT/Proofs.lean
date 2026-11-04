@@ -16,12 +16,16 @@ the intended values:
   `Modulus.fromMont_spec`: modular addition, subtraction and conversions.
 * `pMod_valid`, `nMod_valid`: the constants for `p` and `n` satisfy those
   assumptions (checked by `decide`).
-* `Scalar.add_spec`, `Scalar.sub_spec`, `Scalar.mul_spec`: arithmetic modulo `n`.
-* `Fe.add_spec`, `Fe.mul_spec`: field arithmetic modulo `p` on canonical values.
+* `Modulus.pow_repr`: square-and-multiply exponentiation in Montgomery form.
+* `Scalar.add_spec`, `Scalar.sub_spec`, `Scalar.mul_spec`, `Scalar.inv_spec`:
+  arithmetic modulo `n`; `inv` computes `a^(n-2) mod n`.
+* `Fe.add_spec`, `Fe.sub_spec`, `Fe.neg_spec`, `Fe.mul_spec`, `Fe.inv_spec`:
+  field arithmetic modulo `p` on canonical values; `inv` computes `a^(p-2) mod p`.
 
 These theorems depend only on the standard axioms (`propext`,
-`Classical.choice`, `Quot.sound`). Not yet covered: exponentiation and
-inversion, `Fe.sub`/`Fe.neg`, and the point formulas.
+`Classical.choice`, `Quot.sound`). Not covered: that `a^(m-2)` is the inverse
+(Fermat's little theorem, which needs `p` and `n` to be prime), and the point
+formulas.
 -/
 
 namespace Secp256k1.CT
@@ -221,6 +225,8 @@ structure Modulus.Valid (M : Modulus) : Prop where
   coprime : Nat.Coprime M.value (2 ^ 256)
   r2_valid : M.r2.Valid
   r2_eq : M.r2.toNat = 2 ^ 256 * 2 ^ 256 % M.value
+  one_valid : M.one.Valid
+  one_eq : M.one.toNat = 2 ^ 256 % M.value
 
 theorem Modulus.montStep_spec (M : Modulus) (hM : M.Valid) (b : U256) (hb : b.Valid)
     (hbm : b.toNat < M.value) (t : U288) (ht : t.low.Valid) (ht8 : t.l8.toNat ≤ 1)
@@ -229,7 +235,7 @@ theorem Modulus.montStep_spec (M : Modulus) (hM : M.Valid) (b : U256) (hb : b.Va
     (M.montStep b t ai).toNat < 2 * M.value ∧
     ∃ u, u < 2 ^ 32 ∧
       (M.montStep b t ai).toNat * 2 ^ 32 = t.toNat + ai.toNat * b.toNat + u * M.value := by
-  obtain ⟨hmv, hmeq, hIlt, hI, _, _, _, _, _⟩ := hM
+  obtain ⟨hmv, hmeq, hIlt, hI, _, _, _, _, _, _, _⟩ := hM
   have hm0 := hmv.1
   simp only [Modulus.montStep]
   -- s = t.low + aᵢ·b
@@ -495,6 +501,8 @@ theorem pMod_valid : pMod.Valid where
   coprime := by unfold Nat.Coprime; decide
   r2_valid := by unfold U256.Valid; decide
   r2_eq := by decide
+  one_valid := by unfold U256.Valid; decide
+  one_eq := by decide
 
 set_option exponentiation.threshold 600 in
 theorem nMod_valid : nMod.Valid where
@@ -507,6 +515,8 @@ theorem nMod_valid : nMod.Valid where
   coprime := by unfold Nat.Coprime; decide
   r2_valid := by unfold U256.Valid; decide
   r2_eq := by decide
+  one_valid := by unfold U256.Valid; decide
+  one_eq := by decide
 
 /-! ### Scalars (plain form modulo `n`) -/
 
@@ -614,5 +624,156 @@ theorem Fe.add_spec (a b : Fe) (ha : a.Valid) (hb : b.Valid) :
     _ = (a' * 2 ^ 256 % p + b' * 2 ^ 256 % p) % p := by rw [ea, eb]
     _ = 2 ^ 256 * ((a' + b') % p) % p := by
         rw [← Nat.add_mod, Nat.mul_mod_mod]; congr 1; grind
+
+/-! ### Values in Montgomery form, exponentiation and inversion -/
+
+/-- `x` is the canonical Montgomery form of `v` modulo `m`: `x = v · 2²⁵⁶ mod m`. -/
+def Modulus.Repr (M : Modulus) (x : U256) (v : Nat) : Prop :=
+  x.Valid ∧ x.toNat = v * 2 ^ 256 % M.value
+
+theorem Modulus.Repr.lt {M : Modulus} (hM : M.Valid) {x : U256} {v : Nat} (h : M.Repr x v) :
+    x.toNat < M.value := by
+  rw [h.2]; exact Nat.mod_lt _ hM.value_pos
+
+/-- Montgomery multiplication multiplies the represented values. -/
+theorem Modulus.mul_repr (M : Modulus) (hM : M.Valid) {x y : U256} {v w : Nat}
+    (hx : M.Repr x v) (hy : M.Repr y w) : M.Repr (M.mul x y) (v * w) := by
+  have ⟨cv, clt, ceq⟩ := mul_spec M hM x y hx.1 hy.1 (hy.lt hM)
+  refine ⟨cv, ?_⟩
+  apply mod_cancel (k := 2 ^ 256) hM.coprime clt (Nat.mod_lt _ hM.value_pos)
+  rw [Nat.mul_comm (2 ^ 256) (M.mul x y).toNat, ceq, hx.2, hy.2, ← Nat.mul_mod,
+    Nat.mul_mod_mod]
+  congr 1
+  rw [Nat.mul_comm v w, Nat.mul_assoc, Nat.mul_comm (2 ^ 256) (w * 2 ^ 256), Nat.mul_assoc]
+  ac_rfl
+
+theorem Modulus.one_repr (M : Modulus) (hM : M.Valid) : M.Repr M.one 1 := by
+  refine ⟨hM.one_valid, ?_⟩; rw [hM.one_eq, Nat.one_mul]
+
+theorem pow_step_one (v α e i : Nat) (hb : e / 2 ^ i % 2 = 1) :
+    (v * v * α) ^ 2 ^ i * α ^ (e % 2 ^ i) = v ^ 2 ^ (i + 1) * α ^ (e % 2 ^ (i + 1)) := by
+  rw [Nat.mod_pow_succ, hb, Nat.mul_one, Nat.pow_succ 2 i, Nat.pow_mul, Nat.pow_two,
+    Nat.pow_add, Nat.mul_pow, Nat.mul_pow]
+  ac_rfl
+
+theorem pow_step_zero (v α e i : Nat) (hb : e / 2 ^ i % 2 = 0) :
+    (v * v) ^ 2 ^ i * α ^ (e % 2 ^ i) = v ^ 2 ^ (i + 1) * α ^ (e % 2 ^ (i + 1)) := by
+  rw [Nat.mod_pow_succ, hb, Nat.mul_zero, Nat.pow_succ 2 i, Nat.pow_mul,
+    Nat.pow_two, Nat.mul_pow, Nat.add_zero]
+
+/-- The square-and-multiply loop: after processing the low `i` bits of `e`
+starting from a representative of `v`, the result represents
+`v^(2^i) · α^(e mod 2^i)`. -/
+theorem Modulus.pow_go_repr (M : Modulus) (hM : M.Valid) {a : U256} {α : Nat}
+    (ha : M.Repr a α) (e : Nat) :
+    ∀ (i : Nat) (acc : U256) (v : Nat), M.Repr acc v →
+      M.Repr (Modulus.pow.go M a e i acc) (v ^ (2 ^ i) * α ^ (e % 2 ^ i))
+  | 0, acc, v, h => by
+    simp only [Modulus.pow.go, Nat.pow_zero, Nat.pow_one, Nat.mod_one, Nat.mul_one]; exact h
+  | i + 1, acc, v, h => by
+    simp only [Modulus.pow.go]
+    have hsq := M.mul_repr hM h h
+    by_cases hb : e.testBit i = true
+    · simp only [hb, ↓reduceIte]
+      have := Modulus.pow_go_repr M hM ha e i _ _ (M.mul_repr hM hsq ha)
+      rw [pow_step_one v α e i (by simpa [Nat.testBit_eq_decide_div_mod_eq] using hb)] at this
+      exact this
+    · simp only [hb, Bool.false_eq_true, ↓reduceIte]
+      have := Modulus.pow_go_repr M hM ha e i _ _ hsq
+      have hb' : e / 2 ^ i % 2 = 0 := by
+        simp [Nat.testBit_eq_decide_div_mod_eq] at hb; omega
+      rw [pow_step_zero v α e i hb'] at this
+      exact this
+
+/-- **Exponentiation is correct**: `Modulus.pow` maps a representative of `α`
+to a representative of `α ^ e`. -/
+theorem Modulus.pow_repr (M : Modulus) (hM : M.Valid) {a : U256} {α : Nat}
+    (ha : M.Repr a α) (e : Nat) : M.Repr (M.pow a e) (α ^ e) := by
+  have := M.pow_go_repr hM ha e (e.log2 + 1) M.one 1 (M.one_repr hM)
+  rw [Nat.one_pow, Nat.one_mul, Nat.mod_eq_of_lt Nat.lt_log2_self] at this
+  exact this
+
+theorem Modulus.toMont_repr (M : Modulus) (hM : M.Valid) (a : U256) (ha : a.Valid) :
+    M.Repr (M.toMont a) a.toNat :=
+  M.toMont_spec hM a ha
+
+theorem Modulus.fromMont_repr (M : Modulus) (hM : M.Valid) {x : U256} {v : Nat}
+    (hx : M.Repr x v) : (M.fromMont x).Valid ∧ (M.fromMont x).toNat = v % M.value := by
+  have ⟨cv, clt, ceq⟩ := M.fromMont_spec hM x hx.1
+  refine ⟨cv, ?_⟩
+  apply mod_cancel (k := 2 ^ 256) hM.coprime clt (Nat.mod_lt _ hM.value_pos)
+  rw [Nat.mul_comm (2 ^ 256) (M.fromMont x).toNat, ceq, Nat.mod_eq_of_lt (hx.lt hM), hx.2,
+    Nat.mul_mod_mod, Nat.mul_comm]
+
+/-- **Scalar inversion computes `a^(n-2) mod n`** (which is `a⁻¹` because
+`n` is prime). -/
+theorem Scalar.inv_spec (a : Scalar) (ha : a.Valid) :
+    (Scalar.inv a).Valid ∧ (Scalar.inv a).toNat = a.toNat ^ (n - 2) % n := by
+  have hM := nMod_valid
+  have h := nMod.fromMont_repr hM (nMod.pow_repr hM (nMod.toMont_repr hM a.val ha.1) (n - 2))
+  exact ⟨⟨h.1, by show (nMod.fromMont _).toNat < n; rw [h.2]; exact Nat.mod_lt _ (by decide)⟩, h.2⟩
+
+/-- A valid field element is the Montgomery form of its canonical value. -/
+theorem Fe.repr (a : Fe) (ha : a.Valid) : pMod.Repr a.mont a.toNat := by
+  have hM := pMod_valid
+  have ⟨_, _, e⟩ := pMod.fromMont_spec hM a.mont ha.1
+  rw [Nat.mod_eq_of_lt (show a.mont.toNat < pMod.value from ha.2)] at e
+  exact ⟨ha.1, e.symm⟩
+
+/-- **Field inversion computes `a^(p-2) mod p`** (which is `a⁻¹` because `p`
+is prime). -/
+theorem Fe.inv_spec (a : Fe) (ha : a.Valid) :
+    (Fe.inv a).Valid ∧ (Fe.inv a).toNat = a.toNat ^ (p - 2) % p := by
+  have hM := pMod_valid
+  rw [show Fe.inv a = ⟨pMod.pow a.mont (p - 2)⟩ from rfl]
+  generalize hx : pMod.pow a.mont (p - 2) = x
+  have hr : pMod.Repr x (a.toNat ^ (p - 2)) := hx ▸ pMod.pow_repr hM (a.repr ha) (p - 2)
+  exact ⟨⟨hr.1, hr.lt hM⟩, (pMod.fromMont_repr hM hr).2⟩
+
+/-- Cancel an addend modulo `m` between two values below `m`. -/
+theorem add_mod_cancel {c d y m : Nat} (hc : c < m) (hd : d < m)
+    (h : (c + y) % m = (d + y) % m) : c = d := by
+  have key : ∀ c d, c < m → d < m → (c + y) % m = (d + y) % m → d ≤ c → c = d := by
+    intro c d hc hd h hle
+    have h1 := Nat.sub_mod_eq_zero_of_mod_eq h
+    rw [Nat.add_sub_add_right] at h1
+    have := Nat.eq_zero_of_dvd_of_lt (Nat.dvd_of_mod_eq_zero h1) (by omega)
+    omega
+  rcases Nat.le_total d c with hle | hle
+  · exact key c d hc hd h hle
+  · exact (key d c hd hc h.symm hle).symm
+
+/-- Modular subtraction on Montgomery representatives. -/
+theorem Modulus.sub_repr (M : Modulus) (hM : M.Valid) {x y : U256} {v w : Nat}
+    (hx : M.Repr x v) (hy : M.Repr y w) (hw : w < M.value) :
+    M.Repr (M.sub x y) (v + M.value - w) := by
+  have ⟨cv, ceq⟩ := M.sub_spec hM x y hx.1 hy.1 (hx.lt hM) (hy.lt hM)
+  refine ⟨cv, ?_⟩
+  have hm := hM.value_pos
+  apply add_mod_cancel (y := y.toNat) (by rw [ceq]; exact Nat.mod_lt _ hm) (Nat.mod_lt _ hm)
+  have hyl := hy.lt hM
+  rw [ceq, Nat.mod_add_mod, Nat.sub_add_cancel (by omega), Nat.add_mod_right, hy.2,
+    Nat.add_mod_mod, Nat.mod_add_mod, ← Nat.add_mul, Nat.sub_add_cancel (by omega),
+    Nat.add_mul, Nat.mul_comm M.value, Nat.add_mul_mod_self_right, hx.2, Nat.mod_mod]
+
+/-- **Field subtraction is correct** on canonical values. -/
+theorem Fe.sub_spec (a b : Fe) (ha : a.Valid) (hb : b.Valid) :
+    (a - b).Valid ∧ (a - b).toNat = (a.toNat + p - b.toNat) % p := by
+  have hM := pMod_valid
+  have hblt : b.toNat < p := by
+    have ⟨_, h, _⟩ := pMod.fromMont_spec hM b.mont hb.1; exact h
+  have hr := pMod.sub_repr hM (a.repr ha) (b.repr hb) hblt
+  exact ⟨⟨hr.1, hr.lt hM⟩, (pMod.fromMont_repr hM hr).2⟩
+
+/-- **Field negation is correct** on canonical values. -/
+theorem Fe.neg_spec (a : Fe) (ha : a.Valid) :
+    (-a).Valid ∧ (-a).toNat = (p - a.toNat) % p := by
+  have hM := pMod_valid
+  have hzero : pMod.Repr U256.zero 0 := ⟨by simp [U256.zero, U256.Valid], by decide⟩
+  have halt : a.toNat < p := by
+    have ⟨_, h, _⟩ := pMod.fromMont_spec hM a.mont ha.1; exact h
+  have hr := pMod.sub_repr hM hzero (a.repr ha) halt
+  rw [Nat.zero_add] at hr
+  exact ⟨⟨hr.1, hr.lt hM⟩, (pMod.fromMont_repr hM hr).2⟩
 
 end Secp256k1.CT

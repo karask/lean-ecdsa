@@ -66,10 +66,14 @@ def toBytes (sk : PrivateKey) : ByteArray := sk.scalar.toBytes
 
 /-- Generate a private key from `IO.getRandomBytes` by rejection sampling.
 
-Lean only documents `IO.getRandomBytes` as reading a "system entropy
-source" and does not guarantee it is cryptographically secure. For keys
-protecting real value, obtain 32 bytes from a vetted CSPRNG and use
-`ofBytes?`. -/
+In Lean v4.35.0 (the pinned toolchain), `IO.getRandomBytes` reads
+`/dev/urandom` on Unix-like systems and calls `BCryptGenRandom` on Windows,
+both the operating system's cryptographically secure generator (see
+`src/runtime/io.cpp` in the Lean repository). Lean documents this only as a
+"system entropy source" and not as a guarantee, so re-check it when changing
+toolchains. Unlike `getrandom(2)`, reading `/dev/urandom` does not wait for
+the kernel generator to be seeded, which can matter very early in boot on
+some systems. -/
 partial def generate : IO PrivateKey := do
   let bs ← IO.getRandomBytes 32
   match ofBytes? bs with
@@ -217,40 +221,6 @@ def signWithNonce (sk : PrivateKey) (e : Nat) (k : CT.Scalar) (lowS : Bool := tr
     let (s, recId) := if lowS && s > n / 2 then (n - s, recId ^^^ 1) else (s, recId)
     some ⟨⟨r, s⟩, Fin.ofNat 4 recId⟩
 
-namespace PrivateKey
-
-/-- Sign a message digest, returning the signature and its recovery id.
-
-The nonce is derived deterministically with RFC 6979 (HMAC-SHA-256);
-`extraEntropy` is mixed in as RFC 6979 §3.6 additional data. With
-`lowS := true` (the default) the result is normalised so that `s ≤ n/2`.
-
-Returns `none` only if 64 consecutive nonce candidates are rejected, which
-happens with negligible probability. -/
-def signHashRecoverable (sk : PrivateKey) (h : ByteArray) (lowS : Bool := true)
-    (extraEntropy : ByteArray := .empty) : Option RecoverableSignature :=
-  let e := hashToScalar h
-  RFC6979.findNonce
-    (fun T => (CT.Scalar.ofBytes? T).bind (signWithNonce sk e · lowS))
-    64 (RFC6979.init sk.toBytes h extraEntropy)
-
-/-- Sign a message digest. See `signHashRecoverable`. -/
-def signHash (sk : PrivateKey) (h : ByteArray) (lowS : Bool := true)
-    (extraEntropy : ByteArray := .empty) : Option Signature :=
-  (sk.signHashRecoverable h lowS extraEntropy).map (·.sig)
-
-/-- Sign `SHA-256(msg)`, returning the signature and its recovery id. -/
-def signRecoverable (sk : PrivateKey) (msg : ByteArray) (lowS : Bool := true)
-    (extraEntropy : ByteArray := .empty) : Option RecoverableSignature :=
-  sk.signHashRecoverable (SHA256.hash msg) lowS extraEntropy
-
-/-- Sign `SHA-256(msg)`. -/
-def sign (sk : PrivateKey) (msg : ByteArray) (lowS : Bool := true)
-    (extraEntropy : ByteArray := .empty) : Option Signature :=
-  sk.signHash (SHA256.hash msg) lowS extraEntropy
-
-end PrivateKey
-
 namespace PublicKey
 
 /-- Verify a signature over a message digest (SEC 1 §4.1.4).
@@ -297,5 +267,51 @@ def recover? (msg : ByteArray) (rsig : RecoverableSignature) : Option PublicKey 
   recoverHash? (SHA256.hash msg) rsig
 
 end PublicKey
+
+namespace PrivateKey
+
+/-- Sign a message digest, returning the signature and its recovery id.
+
+The nonce is derived deterministically with RFC 6979 (HMAC-SHA-256);
+`extraEntropy` is mixed in as RFC 6979 §3.6 additional data. With
+`lowS := true` (the default) the result is normalised so that `s ≤ n/2`.
+
+With `verifyAfterSign := true`, the signature is verified against the public
+key before it is returned, and `none` is returned if that check fails. This is
+a countermeasure against fault attacks: a glitch or bit flip during signing
+that yields a wrong signature could otherwise reveal the private key. It
+roughly doubles the cost of signing.
+
+Otherwise, returns `none` only if 64 consecutive nonce candidates are
+rejected, which happens with negligible probability. -/
+def signHashRecoverable (sk : PrivateKey) (h : ByteArray) (lowS : Bool := true)
+    (extraEntropy : ByteArray := .empty) (verifyAfterSign : Bool := false) :
+    Option RecoverableSignature :=
+  let e := hashToScalar h
+  let rsig? := RFC6979.findNonce
+    (fun T => (CT.Scalar.ofBytes? T).bind (signWithNonce sk e · lowS))
+    64 (RFC6979.init sk.toBytes h extraEntropy)
+  if verifyAfterSign then rsig?.filter (sk.publicKey.verifyHash h ·.sig) else rsig?
+
+/-- Sign a message digest. See `signHashRecoverable`. -/
+def signHash (sk : PrivateKey) (h : ByteArray) (lowS : Bool := true)
+    (extraEntropy : ByteArray := .empty) (verifyAfterSign : Bool := false) :
+    Option Signature :=
+  (sk.signHashRecoverable h lowS extraEntropy verifyAfterSign).map (·.sig)
+
+/-- Sign `SHA-256(msg)`, returning the signature and its recovery id. -/
+def signRecoverable (sk : PrivateKey) (msg : ByteArray) (lowS : Bool := true)
+    (extraEntropy : ByteArray := .empty) (verifyAfterSign : Bool := false) :
+    Option RecoverableSignature :=
+  sk.signHashRecoverable (SHA256.hash msg) lowS extraEntropy verifyAfterSign
+
+/-- Sign `SHA-256(msg)`. See `signHashRecoverable`. -/
+def sign (sk : PrivateKey) (msg : ByteArray) (lowS : Bool := true)
+    (extraEntropy : ByteArray := .empty) (verifyAfterSign : Bool := false) :
+    Option Signature :=
+  sk.signHash (SHA256.hash msg) lowS extraEntropy verifyAfterSign
+
+end PrivateKey
+
 
 end Secp256k1.ECDSA
