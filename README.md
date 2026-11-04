@@ -21,7 +21,7 @@ With the default options, signatures match libsecp256k1's `secp256k1_ecdsa_sign`
 > [!WARNING]
 > Hardening is well advanced, but the library is **not yet suitable for keys with real value**. What is done:
 > - The secret-dependent code passes a valgrind check of its machine code.
-> - Its field and scalar arithmetic, including inversion, is proved correct.
+> - Its field and scalar arithmetic is proved correct, including that inversion computes `a^(m-2) mod m`.
 > - It agrees with libsecp256k1 on 100,000 fuzzed inputs.
 >
 > However:
