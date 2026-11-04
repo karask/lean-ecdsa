@@ -1,4 +1,5 @@
 import Secp256k1.CT.PointProofs
+import Secp256k1.ECDSA
 
 /-!
 # The constant-time scalar multiplication
@@ -45,6 +46,11 @@ theorem dbl_onCurve {X : Point} (h : X.OnCurve) : X.dbl.OnCurve := addSpec_onCur
 
 end Point
 
+theorem G_onCurve : G.OnCurve := by
+  have h := G_isValid
+  simp only [G, Point.isValid, Point.isOnCurve, beq_iff_eq] at h
+  exact h
+
 namespace CT
 
 /-! ## Masks, without `bv_decide` -/
@@ -74,6 +80,42 @@ theorem eqMask_of_eq {a b : UInt64} (h : a = b) : eqMask a b = maskOf 1 := by
 
 theorem eqMask_of_ne {a b : UInt64} (h : a ≠ b) : eqMask a b = maskOf 0 := by
   unfold eqMask; rw [isZeroBit_ne (fun h' => h (UInt64.xor_eq_zero_iff.mp h'))]
+
+/-! ## Base-16 digits of a scalar -/
+
+theorem U256.limb_toNat (a : U256) (ha : a.Valid) (q : Nat) (hq : q < 8) :
+    (a.limb q).toNat = a.toNat / 2 ^ (32 * q) % 2 ^ 32 := by
+  obtain ⟨h0, h1, h2, h3, h4, h5, h6, h7⟩ := ha
+  have : q = 0 ∨ q = 1 ∨ q = 2 ∨ q = 3 ∨ q = 4 ∨ q = 5 ∨ q = 6 ∨ q = 7 := by omega
+  rcases this with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+    simp only [U256.limb, U256.toNat] <;> omega
+
+theorem nibble_of_word (K r : Nat) (hr : r < 8) :
+    K / 2 ^ (4 * r) % 16 = K % 2 ^ 32 / 2 ^ (4 * r) % 16 := by
+  have : r = 0 ∨ r = 1 ∨ r = 2 ∨ r = 3 ∨ r = 4 ∨ r = 5 ∨ r = 6 ∨ r = 7 := by omega
+  rcases this with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> omega
+
+/-- **The windows of the scalar multiplication are the base-16 digits of `k`.** -/
+theorem Scalar.nibble_toNat (k : Scalar) (hk : k.val.Valid) (w : Nat) (hw : w < 64) :
+    (k.nibble w).toNat = k.toNat / 16 ^ w % 16 := by
+  have hq : w / 8 < 8 := by omega
+  have hr : w % 8 < 8 := Nat.mod_lt _ (by decide)
+  have hshift : (4 * (w % 8)).toUInt64.toNat % 64 = 4 * (w % 8) := by
+    rw [Nat.toUInt64_eq, UInt64.toNat_ofNat']; omega
+  simp only [Scalar.nibble, UInt64.toNat_and, UInt64.toNat_shiftRight, hshift,
+    Nat.shiftRight_eq_div_pow]
+  have : (0xF : UInt64).toNat = 2 ^ 4 - 1 := by decide
+  rw [this, Nat.and_two_pow_sub_one_eq_mod, U256.limb_toNat _ hk _ hq,
+    ← nibble_of_word _ _ hr, Nat.div_div_eq_div_mul, ← Nat.pow_add]
+  have hw' : 32 * (w / 8) + 4 * (w % 8) = 4 * w := by omega
+  rw [hw', Nat.pow_mul]
+  rfl
+
+theorem Scalar.nibble_lt (k : Scalar) (w : Nat) : (k.nibble w).toNat < 16 := by
+  simp only [Scalar.nibble, UInt64.toNat_and]
+  have : (0xF : UInt64).toNat = 2 ^ 4 - 1 := by decide
+  rw [this, Nat.and_two_pow_sub_one_eq_mod]
+  exact Nat.mod_lt _ (by decide)
 
 namespace PPoint
 
@@ -160,43 +202,7 @@ theorem table_correct {P : PPoint} {A : Point} (hA : A.OnCurve) (hP : P.Represen
   rw [ht]
   exact ⟨by rw [hs]; rfl, hi⟩
 
-/-! ## Base-16 digits of a scalar -/
-
-theorem U256.limb_toNat (a : U256) (ha : a.Valid) (q : Nat) (hq : q < 8) :
-    (a.limb q).toNat = a.toNat / 2 ^ (32 * q) % 2 ^ 32 := by
-  obtain ⟨h0, h1, h2, h3, h4, h5, h6, h7⟩ := ha
-  have : q = 0 ∨ q = 1 ∨ q = 2 ∨ q = 3 ∨ q = 4 ∨ q = 5 ∨ q = 6 ∨ q = 7 := by omega
-  rcases this with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
-    simp only [U256.limb, U256.toNat] <;> omega
-
-theorem nibble_of_word (K r : Nat) (hr : r < 8) :
-    K / 2 ^ (4 * r) % 16 = K % 2 ^ 32 / 2 ^ (4 * r) % 16 := by
-  have : r = 0 ∨ r = 1 ∨ r = 2 ∨ r = 3 ∨ r = 4 ∨ r = 5 ∨ r = 6 ∨ r = 7 := by omega
-  rcases this with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> omega
-
-/-- **The windows of the scalar multiplication are the base-16 digits of `k`.** -/
-theorem Scalar.nibble_toNat (k : Scalar) (hk : k.val.Valid) (w : Nat) (hw : w < 64) :
-    (k.nibble w).toNat = k.toNat / 16 ^ w % 16 := by
-  have hq : w / 8 < 8 := by omega
-  have hr : w % 8 < 8 := Nat.mod_lt _ (by decide)
-  have hshift : (4 * (w % 8)).toUInt64.toNat % 64 = 4 * (w % 8) := by
-    rw [Nat.toUInt64_eq, UInt64.toNat_ofNat']; omega
-  simp only [Scalar.nibble, UInt64.toNat_and, UInt64.toNat_shiftRight, hshift,
-    Nat.shiftRight_eq_div_pow]
-  have : (0xF : UInt64).toNat = 2 ^ 4 - 1 := by decide
-  rw [this, Nat.and_two_pow_sub_one_eq_mod, U256.limb_toNat _ hk _ hq,
-    ← nibble_of_word _ _ hr, Nat.div_div_eq_div_mul, ← Nat.pow_add]
-  have hw' : 32 * (w / 8) + 4 * (w % 8) = 4 * w := by omega
-  rw [hw', Nat.pow_mul]
-  rfl
-
 /-! ## The windowed loop -/
-
-theorem Scalar.nibble_lt (k : Scalar) (w : Nat) : (k.nibble w).toNat < 16 := by
-  simp only [Scalar.nibble, UInt64.toNat_and]
-  have : (0xF : UInt64).toNat = 2 ^ 4 - 1 := by decide
-  rw [this, Nat.and_two_pow_sub_one_eq_mod]
-  exact Nat.mod_lt _ (by decide)
 
 theorem smulTable_go_correct {T : Array PPoint} {A : Point} (hA : A.OnCurve) (hT : T.size = 16)
     (hTi : ∀ i (h : i < T.size), T[i].Represents (A.mulSpec i)) (k : Scalar) :
@@ -226,18 +232,95 @@ theorem smul_correct {P : PPoint} {A : Point} (hA : A.OnCurve) (hP : P.Represent
   obtain ⟨hs, hi⟩ := table_correct hA hP
   exact smulTable_go_correct hA hs hi k 64 infinity .infinity trivial infinity_represents
 
-theorem G_onCurve : G.OnCurve := by
-  have h := G_isValid
-  simp only [G, Point.isValid, Point.isOnCurve, beq_iff_eq] at h
-  exact h
-
 /-- **Constant-time `k • G` follows the windowed algorithm.** -/
 theorem smulG_correct (k : Scalar) :
     (smulG k).Represents (G.windowSpec (fun w => (k.nibble w).toNat) 64 .infinity) :=
   smul_correct G_onCurve (ofPoint_represents G) k
+
+/-! ## Conversion to affine coordinates -/
+
+theorem U256.isZero_eq_one {a : U256} (ha : a.Valid) (h : a.toNat = 0) : a.isZero = 1 := by
+  obtain ⟨h0, h1, h2, h3, h4, h5, h6, h7⟩ := ha
+  have hz : ∀ x : UInt64, x.toNat = 0 → x = 0 := fun x hx => UInt64.toNat_inj.mp (by rw [hx]; rfl)
+  simp only [U256.toNat] at h
+  unfold U256.isZero
+  rw [hz a.l0 (by omega), hz a.l1 (by omega), hz a.l2 (by omega), hz a.l3 (by omega),
+    hz a.l4 (by omega), hz a.l5 (by omega), hz a.l6 (by omega), hz a.l7 (by omega)]
+  decide
+
+theorem U256.isZero_eq_zero {a : U256} (h : a.toNat ≠ 0) : a.isZero = 0 := by
+  unfold U256.isZero
+  apply isZeroBit_ne
+  intro h0
+  simp only [UInt64.or_eq_zero_iff] at h0
+  obtain ⟨⟨⟨⟨⟨⟨⟨h0, h1⟩, h2⟩, h3⟩, h4⟩, h5⟩, h6⟩, h7⟩ := h0
+  apply h
+  simp only [U256.toNat, h0, h1, h2, h3, h4, h5, h6, h7, UInt64.toNat_zero]
+
+/-- A valid field element is zero exactly when its Montgomery form is. -/
+theorem Fe.mont_toNat_eq_zero {a : Fe} (ha : a.Valid) : a.mont.toNat = 0 ↔ a.toNat = 0 := by
+  have hM := pMod_valid
+  have ⟨_, hlt, he⟩ := pMod.fromMont_spec hM a.mont ha.1
+  have hval : pMod.value = p := rfl
+  rw [hval] at hlt he
+  constructor
+  · intro h0
+    rw [h0] at he
+    apply mod_cancel (k := 2 ^ 256) (m := p) hM.coprime hlt (by decide)
+    rw [Nat.mul_comm, show 2 ^ 256 * 0 % p = 0 % p from rfl]
+    exact he
+  · intro h0
+    have : a.mont.toNat % p = 0 := by
+      rw [← he]; show a.toNat * 2 ^ 256 % p = 0; rw [h0]; rfl
+    rwa [Nat.mod_eq_of_lt ha.2] at this
+
+theorem Fe.isZero_eq_one {a : Fe} {x : Fp} (ha : a.R x) (hx : x = 0) : a.isZero = 1 := by
+  apply U256.isZero_eq_one ha.1.1
+  rw [Fe.mont_toNat_eq_zero ha.1]
+  have := congrArg Fin.val (ha.2.trans hx)
+  rwa [Fe.toFp_val _ ha.1] at this
+
+theorem Fe.isZero_eq_zero {a : Fe} {x : Fp} (ha : a.R x) (hx : x ≠ 0) : a.isZero = 0 := by
+  apply U256.isZero_eq_zero
+  rw [ne_eq, Fe.mont_toNat_eq_zero ha.1]
+  intro h; apply hx; rw [← ha.2]; apply Fin.ext; rw [Fe.toFp_val _ ha.1, h]; rfl
+
+theorem Fe.R.inv {a : Fe} {x : Fp} (ha : a.R x) : (Fe.inv a).R (Fp.inv x) := by
+  have ⟨v, e⟩ := Fe.inv_spec a ha.1
+  refine ⟨v, Fin.ext ?_⟩
+  rw [Fe.toFp_val _ v, e, Fp.val_inv, ← ha.2, Fe.toFp_val _ ha.1]
+
+/-- **Conversion to affine coordinates returns the represented point.** -/
+theorem toPoint_eq {P : PPoint} {A : Point} (hP : P.Represents A) : P.toPoint = A := by
+  obtain ⟨hx, hy, hz, hrep⟩ := hP
+  have rX : P.X.R P.X.toFp := ⟨hx, rfl⟩
+  have rY : P.Y.R P.Y.toFp := ⟨hy, rfl⟩
+  have rZ : P.Z.R P.Z.toFp := ⟨hz, rfl⟩
+  cases A with
+  | infinity =>
+    obtain ⟨_, hZ, _⟩ := hrep
+    simp only [toPoint, toAffine, declassify, Fe.isZero_eq_one rZ hZ]
+    rfl
+  | affine x y =>
+    obtain ⟨hZ, hX, hY⟩ := hrep
+    simp only [toPoint, toAffine, declassify, Fe.isZero_eq_zero rZ hZ]
+    have hzi := Fp.mul_inv_cancel hZ
+    rw [(Fe.R.mul rX (Fe.R.inv rZ)).2, (Fe.R.mul rY (Fe.R.inv rZ)).2, hX, hY]
+    congr 1 <;> grind
 
 end PPoint
 
 end CT
 
 end Secp256k1
+
+namespace Secp256k1.ECDSA
+
+/-- Whenever the computed point is a valid public key (i.e. not `𝒪`), `publicKey`
+returns the point computed by the constant-time scalar multiplication. -/
+theorem PrivateKey.publicKey_point (sk : PrivateKey)
+    (h : (CT.PPoint.smulG sk.scalar).toPoint.isValid = true) :
+    sk.publicKey.point = (CT.PPoint.smulG sk.scalar).toPoint :=
+  PublicKey.ofPointD_point h
+
+end Secp256k1.ECDSA

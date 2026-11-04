@@ -5,6 +5,7 @@ import Secp256k1.Curve
 import Secp256k1.RFC6979
 import Secp256k1.CT.Point
 import Secp256k1.CT.Sign
+import Secp256k1.CT.ParseProofs
 
 /-!
 # ECDSA over secp256k1
@@ -41,6 +42,8 @@ namespace Secp256k1.ECDSA
 structure PrivateKey where
   scalar : CT.Scalar
   isNonzero : scalar.isZero = 0
+  /-- `32`-bit limbs and value below `n` (a proof, erased at runtime). -/
+  valid : scalar.Valid
 
 /-- Private keys are deliberately not printed. -/
 instance : Repr PrivateKey := ⟨fun _ _ => "<PrivateKey>"⟩
@@ -50,9 +53,10 @@ namespace PrivateKey
 /-- A private key from its 32-byte big-endian encoding, if it lies in
 `[1, n-1]`. The range check is constant time; only its outcome is revealed. -/
 def ofBytes? (bs : ByteArray) : Option PrivateKey :=
-  match CT.Scalar.ofBytes? bs with
+  match h : CT.Scalar.ofBytes? bs with
   | none => none
-  | some s => if h : CT.declassify s.isZero = 0 then some ⟨s, h⟩ else none
+  | some s =>
+    if hz : CT.declassify s.isZero = 0 then some ⟨s, hz, CT.Scalar.ofBytes?_valid h⟩ else none
 
 /-- A private key from a natural number, if it lies in `[1, n-1]`.
 
@@ -109,11 +113,19 @@ def toBytes (pk : PublicKey) (compressed : Bool := true) : ByteArray :=
 
 end PublicKey
 
-/-- The public key `Q = d • G`, computed with constant-time scalar multiplication. -/
-def PrivateKey.publicKey (sk : PrivateKey) : PublicKey :=
-  match PublicKey.ofPoint? (CT.PPoint.smulG sk.scalar).toPoint with
+/-- `P` as a public key, for a point known to be valid. Falls back to `G` (with
+a panic message) otherwise, which cannot happen for `d • G` with `d ∈ [1, n-1]`. -/
+def PublicKey.ofPointD (P : Point) : PublicKey :=
+  match PublicKey.ofPoint? P with
   | some pk => pk
   | none => panic! "unreachable: d • G is a valid point for d ∈ [1, n-1]"
+
+theorem PublicKey.ofPointD_point {P : Point} (h : P.isValid = true) : (ofPointD P).point = P := by
+  simp only [ofPointD, ofPoint?, h, ↓reduceDIte]
+
+/-- The public key `Q = d • G`, computed with constant-time scalar multiplication. -/
+def PrivateKey.publicKey (sk : PrivateKey) : PublicKey :=
+  PublicKey.ofPointD (CT.PPoint.smulG sk.scalar).toPoint
 
 /-! ## Signatures -/
 

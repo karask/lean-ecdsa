@@ -26,3 +26,25 @@ jobs:
           sudo apt-get update && sudo apt-get install -y valgrind
       - name: Run ctgrind
         run: ./ctgrind/run.sh
+
+  # Mathlib proofs: group law, order of G, public key = d • G (see proofs/README.md).
+  proofs:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: proofs
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+            | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Fetch the Mathlib cache
+        run: lake exe cache get
+      - name: Build the proofs
+        run: lake build
+      - name: Check axioms
+        run: |
+          lake env lean CheckAxioms.lean | tee axioms.txt
+          ! grep -E "sorryAx|ofReduceBool|ofReduceNat" axioms.txt

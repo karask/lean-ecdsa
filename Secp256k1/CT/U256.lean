@@ -98,7 +98,7 @@ def ofNat (x : Nat) : U256 :=
   ⟨w 0, w 1, w 2, w 3, w 4, w 5, w 6, w 7⟩
 
 /-- Read limb `i` from 32 big-endian bytes. -/
-@[inline] private def beWord (bs : ByteArray) (i : Nat) : UInt64 :=
+@[inline] def beWord (bs : ByteArray) (i : Nat) : UInt64 :=
   let o := 28 - 4 * i
   (bs[o]!.toUInt64 <<< 24) ||| (bs[o + 1]!.toUInt64 <<< 16) |||
   (bs[o + 2]!.toUInt64 <<< 8) ||| bs[o + 3]!.toUInt64
