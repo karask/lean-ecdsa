@@ -8,4 +8,5 @@ import Secp256k1.CT.Field
 import Secp256k1.CT.Point
 import Secp256k1.CT.Sign
 import Secp256k1.CT.Lemmas
+import Secp256k1.CT.Proofs
 import Secp256k1.ECDSA

@@ -5,11 +5,13 @@ import Secp256k1.CT.U256
 # Word-level lemmas for the constant-time arithmetic
 
 Machine-checked facts about the 64-bit word tricks that `Secp256k1.CT`
-relies on. The mask lemmas are proved by bit-blasting (`bv_decide`).
+relies on. The multi-limb arithmetic is proved correct in
+`Secp256k1.CT.Proofs`.
 
-These are the first step towards proving that the limb arithmetic computes
-the same values as the reference `Fin p` / `Fin n` arithmetic; the
-multi-limb operations themselves are, for now, checked by tests.
+`isZeroBit_eq`, `eqMask_eq` and `borrow_eq` are proved by bit-blasting
+(`bv_decide`), whose certificate check trusts compiled code
+(`Lean.ofReduceBool`). The other lemmas, and everything in
+`Secp256k1.CT.Proofs`, use only the standard axioms.
 -/
 
 namespace Secp256k1.CT
@@ -20,11 +22,19 @@ theorem isZeroBit_eq (x : UInt64) : isZeroBit x = if x = 0 then 1 else 0 := by
 
 /-- An all-ones mask selects the first argument. -/
 theorem selectWord_maskOf_one (a b : UInt64) : selectWord (maskOf 1) a b = a := by
-  unfold selectWord maskOf; bv_decide
+  apply UInt64.toNat_inj.mp
+  have h1 : (maskOf 1).toNat = 2 ^ 64 - 1 := by decide
+  have h2 : (~~~maskOf 1).toNat = 0 := by decide
+  simp only [selectWord, UInt64.toNat_or, UInt64.toNat_and, h1, h2, Nat.and_zero, Nat.or_zero,
+    Nat.and_two_pow_sub_one_eq_mod, Nat.mod_eq_of_lt a.toNat_lt]
 
 /-- A zero mask selects the second argument. -/
 theorem selectWord_maskOf_zero (a b : UInt64) : selectWord (maskOf 0) a b = b := by
-  unfold selectWord maskOf; bv_decide
+  apply UInt64.toNat_inj.mp
+  have h1 : (maskOf 0).toNat = 0 := by decide
+  have h2 : (~~~maskOf 0).toNat = 2 ^ 64 - 1 := by decide
+  simp only [selectWord, UInt64.toNat_or, UInt64.toNat_and, h1, h2, Nat.and_zero, Nat.zero_or,
+    Nat.and_two_pow_sub_one_eq_mod, Nat.mod_eq_of_lt b.toNat_lt]
 
 /-- `eqMask` is all-ones exactly on equal inputs. -/
 theorem eqMask_eq (a b : UInt64) : eqMask a b = if a = b then maskOf 1 else maskOf 0 := by

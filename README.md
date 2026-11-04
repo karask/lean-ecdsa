@@ -19,7 +19,14 @@ It includes:
 With the default options, signatures match libsecp256k1's `secp256k1_ecdsa_sign` byte for byte.
 
 > [!WARNING]
-> Side-channel hardening is in progress and the library is **not yet suitable for keys with real value**. Secret-dependent arithmetic is now constant-time at the Lean and generated-C level, but secrets are not wiped from memory, `PrivateKey.generate` relies on `IO.getRandomBytes` (which Lean does not guarantee to be cryptographically secure), the machine code has not been checked, the limb arithmetic is tested but not yet proved, and nothing has been audited. See [what remains](#what-remains).
+> Side-channel hardening is in progress and the library is **not yet suitable for keys with real value**. The secret-dependent code passes a valgrind check of its machine code, and its field and scalar arithmetic is proved correct. However:
+> - secrets are not wiped from memory
+> - `PrivateKey.generate` relies on `IO.getRandomBytes`, which Lean does not guarantee to be cryptographically secure
+> - inversion and the point formulas are tested but not proved
+> - there are no fault-attack countermeasures
+> - nothing has been audited
+>
+> See [what remains](#what-remains).
 
 ## Usage
 
@@ -97,7 +104,9 @@ Lower-level modules:
 - `Secp256k1.CT.U256`: constant-time 256-bit limbs, masks, and Montgomery arithmetic modulo `p` and `n`.
 - `Secp256k1.CT.Field`: constant-time field elements `Fe` and scalars `Scalar`.
 - `Secp256k1.CT.Point`: complete projective formulas and constant-time `k • P` / `k • G`.
+- `Secp256k1.CT.Sign`: the constant-time ECDSA signing core.
 - `Secp256k1.CT.Lemmas`: proved facts about the word-level tricks.
+- `Secp256k1.CT.Proofs`: correctness proofs for the limb, Montgomery, scalar and field arithmetic.
 
 The type invariants mean that every `PrivateKey` is non-zero and every `PublicKey` is a valid curve point. A few properties are proved in Lean, for example:
 
@@ -105,7 +114,15 @@ The type invariants mean that every `PrivateKey` is non-zero and every `PublicKe
 - `G` is on the curve
 - `Signature.normalize` always yields a low-S signature
 - encoding sizes are correct
-- the constant-time mask, select, borrow and multiply-accumulate primitives behave as intended (by `bv_decide` and `omega`)
+- the constant-time arithmetic computes the right values (`Secp256k1.CT.Proofs`):
+  - `U256.add_toNat`, `U256.sub_toNat`, `U256.mulAddRow_toNat`: the carry and borrow chains are exact
+  - `Modulus.mul_spec`: Montgomery multiplication returns the canonical `c < m` with `c · 2²⁵⁶ ≡ a · b (mod m)`, for any odd modulus satisfying `Modulus.Valid`
+  - `Modulus.add_spec`, `Modulus.sub_spec`, `Modulus.toMont_spec`, `Modulus.fromMont_spec`: modular addition, subtraction and Montgomery conversion
+  - `pMod_valid`, `nMod_valid`: the precomputed constants for `p` and `n` satisfy those assumptions
+  - `Scalar.mul_spec`, `Scalar.add_spec`, `Scalar.sub_spec`: arithmetic modulo `n`
+  - `Fe.mul_spec`, `Fe.add_spec`: arithmetic modulo `p`, on canonical values
+
+These theorems depend only on Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`). Three standalone word lemmas in `Secp256k1.CT.Lemmas` use `bv_decide`, which additionally trusts compiled code; the theorems above don't depend on them.
 
 ## Side-channel hardening
 
@@ -117,7 +134,15 @@ Secrets are the private key `d` and the nonce `k`. They are handled only as byte
 - **Fixed-window scalar multiplication.** All 64 4-bit windows of the scalar are processed, each with four doublings and one addition. Every table lookup reads all 16 entries and keeps the wanted one with a mask.
 - **RFC 6979 on bytes.** The key and nonce candidates stay as bytes, and SHA-256 output uses shifts rather than `Nat` division.
 
-Values are converted to `Nat` only once they are public: `R`, `r`, `s` and the recovery id. Verification and recovery use only public data and keep the faster variable-time reference arithmetic, as libsecp256k1 does.
+The whole secret-dependent part of signing is a single branch-free function, `CT.signCore`. It computes `R = k • G`, `r`, `s = k⁻¹(e + r·d)`, the recovery id and a success flag.
+
+Secret-derived values become public in exactly four places, each marked with `CT.declassify`:
+- the signature produced by `signCore`
+- the affine coordinates in `PPoint.toPoint`, used for public keys and `R`
+- whether a scalar is in range (`Scalar.ofBytes?`)
+- whether a private key is non-zero
+
+Only after these points are values converted to `Nat` (`grep -rn declassify Secp256k1/` lists them). Verification and recovery use only public data and keep the faster variable-time reference arithmetic, as libsecp256k1 does.
 
 ### Evidence
 
@@ -130,16 +155,21 @@ Values are converted to `Nat` only once they are public: `R`, `r`, `s` and the r
   | Constant-time `k⁻¹ mod n` | 250 µs | 249 µs | 0.2 |
   | `signWithNonce` | 2229 µs | 2220 µs | 0.7 |
 
-- **Generated C.** `python3 scripts/list_c_branches.py` lists every branch in the C code Lean generates for the `CT` modules. Currently each one tests public data: reference counts used for in-place memory reuse, loop counters, table bounds, public window indices, or bits of public exponents.
-- **Tests and proofs.** `Tests/CT.lean` compares every constant-time operation with the reference arithmetic on edge cases and pseudo-random inputs, and `Secp256k1.CT.Lemmas` proves the word-level primitives.
+- **Machine code (valgrind).** [`ctgrind/`](ctgrind/README.md) runs key derivation, the signing core, RFC 6979 and the scalar and field arithmetic under valgrind memcheck, with the key and nonce bytes marked as undefined. memcheck reports any branch or memory address in the compiled binary that depends on them. The constant-time code produces **0 errors**. The variable-time reference code, run as a positive control, produces errors, including 510 inside its double-and-add loop. Two further checks confirm the method:
+  - A planted secret-indexed table lookup was caught.
+  - A planted `if` on a mask was correctly not flagged, because clang compiles it to a branch-free `cmov`.
+
+  CI runs this check on every push.
+- **Generated C.** `python3 scripts/list_c_branches.py` lists every branch in the C code Lean generates for the `CT` modules. Each one tests public data: reference counts used for in-place memory reuse, loop counters, table bounds, public window indices, or bits of public exponents.
+- **Tests and proofs.** `Tests/CT.lean` compares every constant-time operation with the reference arithmetic on edge cases and pseudo-random inputs. `Secp256k1.CT.Proofs` proves the limb, Montgomery, scalar and field arithmetic correct.
 
 ### What remains
 
-- **Machine code.** The C compiler could still turn masked selects into branches. This needs a binary-level check, such as running under valgrind with secrets marked as undefined (as libsecp256k1's `ctime_tests` does).
-- **Memory hygiene and randomness.** Wiping secrets and using a vetted CSPRNG both need small C bindings.
-- **Proofs.** Prove that `U256` / Montgomery arithmetic equals the `Fin p` / `Fin n` reference, and that the projective formulas implement the curve group law (for example against Mathlib's Weierstrass curves).
+- **Memory hygiene and randomness.** Wiping secrets and using a vetted CSPRNG both need small C bindings. Lean's immutable, reference-counted values also make complete wiping hard.
+- **Proofs.** Prove that exponentiation and inversion, `Fe.sub` and `Fe.neg` are correct, and that the projective formulas implement the curve group law (for example against Mathlib's Weierstrass curves).
+- **Platforms.** The valgrind and timing checks cover x86-64 Linux with the bundled toolchain. Other platforms and compilers need their own runs.
 - **Fault attacks.** Offer verify-after-sign, and blind the scalar or base point.
-- **Assurance.** Add Project Wycheproof vectors, differential fuzzing against libsecp256k1, and an independent audit.
+- **Assurance.** Add differential fuzzing against libsecp256k1, and get an independent audit.
 
 ## Building and testing
 
@@ -148,7 +178,7 @@ lake build   # build the library
 lake test    # run the test suite
 ```
 
-The test suite runs about 11,800 checks. The test vectors in `Tests/Vectors.lean` come from independent implementations:
+The test suite runs about 13,300 checks. They include all 1,192 secp256k1 ECDSA verification vectors from [Project Wycheproof](https://github.com/C2SP/wycheproof), in three forms: DER, Bitcoin low-S and P1363. The files are vendored unchanged in `Tests/wycheproof/`, and these vectors probe malformed encodings, out-of-range values and arithmetic edge cases. The test vectors in `Tests/Vectors.lean` come from independent implementations:
 
 - **libsecp256k1** (through `coincurve`):
   - public keys, compressed and uncompressed
@@ -161,6 +191,13 @@ The test suite runs about 11,800 checks. The test vectors in `Tests/Vectors.lean
 - **Python `hashlib` / `hmac`**: SHA-256 at the one- and two-block padding boundaries, and the HMAC-SHA-256 test cases from RFC 4231.
 
 Other tests check the group laws, rejection of malformed keys, points and DER encodings, sign/verify/recover round trips with random keys, and the constant-time arithmetic against the reference implementation.
+
+Side-channel checks (see above):
+
+```sh
+lake exe timing          # dudect-style timing test
+./ctgrind/run.sh         # valgrind machine-code check (needs valgrind)
+```
 
 To regenerate the vectors:
 
