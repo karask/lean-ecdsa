@@ -119,6 +119,7 @@ Lower-level modules:
 - `Secp256k1.CT.SmulProofs`: proofs for the precomputed table, the constant-time lookup, the windowed scalar multiplication and the conversion to affine coordinates.
 - `Secp256k1.CT.ParseProofs`: parsed scalars are in range, which `PrivateKey` keeps as an invariant.
 - `Secp256k1.OrderProofs`: `n • G = 𝒪`, computed by the kernel.
+- `Secp256k1.CT.SignProofs`: what the constant-time signing core and `signWithNonce` / `signHash` return.
 - [`proofs/`](proofs/README.md): a separate package, depending on Mathlib, for the results that need associativity of the group law.
 
 The type invariants mean that every `PrivateKey` holds a scalar in `[1, n-1]` (checked at runtime, carried as a proof) and every `PublicKey` is a valid curve point. A few properties are proved in Lean, for example:
@@ -154,6 +155,11 @@ The type invariants mean that every `PrivateKey` holds a scalar in `[1, n-1]` (c
   - `windowSpec_n`: `n • G = 𝒪`. The kernel evaluates the windowed algorithm with the complete formulas in about a second.
   - `Secp256k1Proofs.addOrderOf_G` (Mathlib): `G` has order `n`, because `n` is prime and `G ≠ 𝒪`
   - `Secp256k1Proofs.publicKey_correct` (Mathlib): for every private key `d`, `PrivateKey.publicKey` returns `d • G`. The fallback branch for an invalid result is unreachable.
+- signatures are correct (`Secp256k1.CT.SignProofs`, and `proofs/` for the last step):
+  - `signCore_spec`: the constant-time signing core returns `r = R.x mod n` and `s = k⁻¹(e + r·d) mod n` for `R = k • G`, the recovery id `R.y mod 2 + 2·[R.x ≥ n]`, and a success flag that is set exactly when `k`, `r` and `s` are non-zero
+  - `signWithNonce_spec`: the returned signature is `(r, s)` or, after low-S normalisation, `(r, n - s)` with the recovery id flipped to match
+  - `signHash_spec`: every signature from `signHash` comes from `signWithNonce` with a valid nonce accepted by the RFC 6979 loop
+  - `Secp256k1Proofs.sign_verifies` (Mathlib): every signature `(r, s)` returned by `PrivateKey.sign` satisfies the ECDSA verification equation. `r, s ∈ [1, n-1]`, and with `u₁ = e·s⁻¹`, `u₂ = r·s⁻¹ mod n` (computed as in `verifyHash`), `u₁ • G + u₂ • Q` is an affine point whose `x`-coordinate is `r` modulo `n`.
 
 These theorems depend only on Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`); CI checks this for the Mathlib theorems. Three standalone word lemmas in `Secp256k1.CT.Lemmas` use `bv_decide`, which additionally trusts compiled code; the theorems above don't depend on them.
 
@@ -200,10 +206,10 @@ Only after these points are values converted to `Nat` (`grep -rn declassify Secp
 
 - **Memory hygiene.** Secrets are not wiped. Lean values are immutable and reference-counted, so copies of the key and nonce limbs end up in freed memory. Wiping them needs runtime support, not just a C binding.
 - **Randomness.** In Lean v4.35.0, `IO.getRandomBytes` reads `/dev/urandom` on Unix-like systems and calls `BCryptGenRandom` on Windows (`src/runtime/io.cpp`). These are the operating system's cryptographic generators, but Lean doesn't document this as a guarantee, so re-check it when changing toolchains. A `getrandom(2)` binding would also wait for the kernel generator to be seeded at early boot.
-- **Proofs.** Key derivation is proved end to end, from the limb code to `d • G` in Mathlib's group. Not yet proved:
-  - the signing equation: that `CT.signCore` returns `r = (k • G).x mod n` and `s = k⁻¹(e + r·d) mod n`
-  - verification and recovery, which use the variable-time Jacobian reference arithmetic
-  - SHA-256, HMAC and RFC 6979 against their specifications, and the DER and SEC 1 encodings
+- **Proofs.** Key derivation and signing are proved end to end, from the limb code to Mathlib's group: public keys are `d • G`, and signatures satisfy the verification equation. Not yet proved:
+  - that `verifyHash` computes that equation. It uses the variable-time Jacobian reference arithmetic, which has no proofs yet. Together with the above, this would give "every signature from `sign` passes `verify`".
+  - public key recovery
+  - SHA-256, HMAC and RFC 6979 against their specifications (the proofs hold for whatever nonce they produce), and the DER and SEC 1 encodings
 - **Platforms.** The valgrind and timing checks cover x86-64 Linux with the bundled toolchain. Other platforms and compilers need their own runs.
 - **Fault attacks.** `verifyAfterSign := true` checks each signature before releasing it. Scalar or base-point blinding is not implemented.
 - **Assurance.** An independent audit.

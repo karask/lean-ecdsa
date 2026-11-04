@@ -237,6 +237,8 @@ theorem smulG_correct (k : Scalar) :
     (smulG k).Represents (G.windowSpec (fun w => (k.nibble w).toNat) 64 .infinity) :=
   smul_correct G_onCurve (ofPoint_represents G) k
 
+end PPoint
+
 /-! ## Conversion to affine coordinates -/
 
 theorem U256.isZero_eq_one {a : U256} (ha : a.Valid) (h : a.toNat = 0) : a.isZero = 1 := by
@@ -289,6 +291,8 @@ theorem Fe.R.inv {a : Fe} {x : Fp} (ha : a.R x) : (Fe.inv a).R (Fp.inv x) := by
   have ⟨v, e⟩ := Fe.inv_spec a ha.1
   refine ⟨v, Fin.ext ?_⟩
   rw [Fe.toFp_val _ v, e, Fp.val_inv, ← ha.2, Fe.toFp_val _ ha.1]
+
+namespace PPoint
 
 /-- **Conversion to affine coordinates returns the represented point.** -/
 theorem toPoint_eq {P : PPoint} {A : Point} (hP : P.Represents A) : P.toPoint = A := by

@@ -201,16 +201,16 @@ theorem sum_digits (k : Nat) : ∀ n, ∑ j ∈ Finset.range n, (k / 16 ^ j % 16
   | 0 => by simp [Nat.mod_one]
   | n + 1 => by rw [Finset.sum_range_succ, sum_digits k n, Nat.mod_pow_succ]; ring
 
+set_option maxRecDepth 10000 in
+theorem smulGSpec_onCurve (k : CT.Scalar) : (CT.smulGSpec k).OnCurve :=
+  windowSpec_onCurve G_onCurve _ 64 .infinity trivial
+
 -- Elaborating the 64-window specification unfolds a 64-step recursion.
 set_option maxRecDepth 10000 in
-/-- **The constant-time `k • G` computes `k • G`**: `CT.PPoint.smulG k`
-represents the point corresponding to `k • G` in Mathlib's elliptic curve group. -/
-theorem smulG_correct (k : CT.Scalar) (hk : k.Valid) :
-    ∃ (A : Point) (hA : A.OnCurve), (CT.PPoint.smulG k).Represents A ∧
-      toW A hA = k.toNat • toW G G_onCurve := by
-  have hrep := CT.PPoint.smulG_correct k
-  have hon := windowSpec_onCurve G_onCurve (fun w => (k.nibble w).toNat) 64 .infinity trivial
-  refine ⟨_, hon, hrep, ?_⟩
+/-- The windowed algorithm on the base-16 digits of `k` computes `k • G`. -/
+theorem toW_smulGSpec (k : CT.Scalar) (hk : k.Valid) :
+    toW (CT.smulGSpec k) (smulGSpec_onCurve k) = k.toNat • toW G G_onCurve := by
+  show toW (G.windowSpec (fun w => (k.nibble w).toNat) 64 .infinity) _ = _
   rw [toW_windowSpec G_onCurve _ 64 .infinity trivial,
     show toW Point.infinity trivial = 0 from rfl, nsmul_zero, zero_add]
   have hsum : (∑ j ∈ Finset.range 64, (k.nibble j).toNat * 16 ^ j) = k.toNat := by
@@ -220,5 +220,13 @@ theorem smulG_correct (k : CT.Scalar) (hk : k.Valid) :
     have : n < 16 ^ 64 := by decide
     exact lt_trans hk.2 this
   rw [hsum]
+
+set_option maxRecDepth 10000 in
+/-- **The constant-time `k • G` computes `k • G`**: `CT.PPoint.smulG k`
+represents the point corresponding to `k • G` in Mathlib's elliptic curve group. -/
+theorem smulG_correct (k : CT.Scalar) (hk : k.Valid) :
+    ∃ (A : Point) (hA : A.OnCurve), (CT.PPoint.smulG k).Represents A ∧
+      toW A hA = k.toNat • toW G G_onCurve :=
+  ⟨_, smulGSpec_onCurve k, CT.PPoint.smulG_correct k, toW_smulGSpec k hk⟩
 
 end Secp256k1Proofs

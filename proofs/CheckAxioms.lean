@@ -8,3 +8,5 @@ import Secp256k1Proofs
 #print axioms Secp256k1Proofs.smulG_correct
 #print axioms Secp256k1Proofs.addOrderOf_G
 #print axioms Secp256k1Proofs.publicKey_correct
+#print axioms Secp256k1Proofs.signWithNonce_verifies
+#print axioms Secp256k1Proofs.sign_verifies

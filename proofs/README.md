@@ -39,5 +39,15 @@ lake env lean CheckAxioms.lean
   `PrivateKey` carries `d ∈ [1, n-1]` as a proof, so the fallback branch of
   `PublicKey.ofPointD` is unreachable.
 
+`Secp256k1Proofs/Sign.lean`:
+
+- `signWithNonce_verifies`, `signHash_verifies`, `sign_verifies`: **every
+  signature `(r, s)` produced by `PrivateKey.sign` satisfies the ECDSA
+  verification equation**. `r, s ∈ [1, n-1]`, and with `u₁ = e·s⁻¹` and
+  `u₂ = r·s⁻¹ mod n`, computed exactly as in `PublicKey.verifyHash`,
+  `u₁ • G + u₂ • Q` is an affine point whose `x`-coordinate is `r` modulo
+  `n`. This holds for every nonce the RFC 6979 loop can accept, with or
+  without low-S normalisation.
+
 All of these depend only on `propext`, `Classical.choice` and `Quot.sound`;
 `CheckAxioms.lean` prints them and CI fails on `sorryAx` or `Lean.ofReduceBool`.
