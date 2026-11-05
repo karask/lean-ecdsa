@@ -1,22 +1,33 @@
+import Lean
 import Secp256k1Proofs
 
-/-! Run with `lake env lean CheckAxioms.lean`: each theorem should depend only on
-`propext`, `Classical.choice` and `Quot.sound` (no `sorryAx`, no
-`Lean.ofReduceBool` from `native_decide` / `bv_decide`). -/
+/-!
+Checks that every theorem in the `Secp256k1Proofs` and `Secp256k1` namespaces
+depends only on Lean's standard axioms (`propext`, `Classical.choice`,
+`Quot.sound`): no `sorryAx`, and no `Lean.ofReduceBool` from `native_decide` or
+`bv_decide`. Run with `lake env lean CheckAxioms.lean`; it fails otherwise.
+-/
 
-#print axioms Secp256k1Proofs.toW_add
-#print axioms Secp256k1Proofs.smulG_correct
-#print axioms Secp256k1Proofs.addOrderOf_G
+open Lean Elab Command in
+#eval show CommandElabM Unit from do
+  let env ← getEnv
+  let std := [``propext, ``Classical.choice, ``Quot.sound]
+  let mut bad : Array (Name × Array Name) := #[]
+  let mut count := 0
+  for (n, ci) in env.constants.toList do
+    if ((`Secp256k1Proofs).isPrefixOf n || (`Secp256k1).isPrefixOf n) && ci matches .thmInfo _ then
+      count := count + 1
+      let axs ← liftCoreM (Lean.collectAxioms n)
+      let extra := axs.filter (fun a => !std.contains a)
+      if !extra.isEmpty then bad := bad.push (n, extra)
+  if bad.isEmpty then
+    logInfo m!"{count} theorems use only propext, Classical.choice and Quot.sound"
+  else
+    throwError m!"theorems with non-standard axioms: {bad.toList}"
+
+-- The headline results.
 #print axioms Secp256k1Proofs.publicKey_correct
-#print axioms Secp256k1Proofs.signWithNonce_verifies
-#print axioms Secp256k1Proofs.sign_verifies
 #print axioms Secp256k1Proofs.verifyHash_eq_true_iff
 #print axioms Secp256k1Proofs.verify_sign
 #print axioms Secp256k1Proofs.recover_signRecoverable
 #print axioms Secp256k1Proofs.PublicKey.ofBytes?_toBytes
-#print axioms Secp256k1.ECDSA.Signature.toCompact_ofCompact?
-#print axioms Secp256k1.ECDSA.Signature.ofCompact?_toCompact
-#print axioms Secp256k1.ECDSA.PrivateKey.ofBytes?_toBytes
-#print axioms Secp256k1.natToBytes_bytesToNat
-#print axioms Secp256k1.ECDSA.Signature.ofDER?_toDER
-#print axioms Secp256k1.ECDSA.Signature.toDER_ofDER?

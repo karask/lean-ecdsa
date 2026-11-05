@@ -12,6 +12,8 @@ jobs:
       - uses: leanprover/lean-action@v1
         with:
           test: true
+      - name: Check axioms of every theorem
+        run: lake env lean scripts/CheckAxioms.lean
 
   # Constant-time check of the compiled code under valgrind (see ctgrind/README.md).
   ctgrind:

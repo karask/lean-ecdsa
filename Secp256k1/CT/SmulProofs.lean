@@ -53,34 +53,6 @@ theorem G_onCurve : G.OnCurve := by
 
 namespace CT
 
-/-! ## Masks, without `bv_decide` -/
-
-theorem isZeroBit_zero : isZeroBit 0 = 1 := by decide
-
-theorem isZeroBit_ne {x : UInt64} (hx : x ≠ 0) : isZeroBit x = 0 := by
-  have hx' : x.toNat ≠ 0 := fun h => hx (UInt64.toNat_inj.mp (by rw [h]; rfl))
-  have hlt := x.toNat_lt
-  have hneg : (0 - x).toNat = 2 ^ 64 - x.toNat := by
-    rw [UInt64.toNat_sub]; simp only [UInt64.toNat_zero, Nat.add_zero]
-    rw [Nat.mod_eq_of_lt (by omega)]
-  have hor : ((x ||| (0 - x)) >>> 63).toNat = 1 := by
-    rw [UInt64.toNat_shiftRight, UInt64.toNat_or, hneg]
-    have h1 : x.toNat ≤ x.toNat ||| (2 ^ 64 - x.toNat) := Nat.left_le_or
-    have h2 : 2 ^ 64 - x.toNat ≤ x.toNat ||| (2 ^ 64 - x.toNat) := Nat.right_le_or
-    have h3 : x.toNat ||| (2 ^ 64 - x.toNat) < 2 ^ 64 := Nat.or_lt_two_pow hlt (by omega)
-    simp only [show (63 : UInt64).toNat % 64 = 63 by decide, Nat.shiftRight_eq_div_pow]
-    omega
-  have : (x ||| (0 - x)) >>> 63 = 1 := UInt64.toNat_inj.mp (by rw [hor]; rfl)
-  unfold isZeroBit; rw [this]; decide
-
-/-- `eqMask` is all-ones exactly on equal inputs (kernel-checked version of
-`eqMask_eq`). -/
-theorem eqMask_of_eq {a b : UInt64} (h : a = b) : eqMask a b = maskOf 1 := by
-  subst h; unfold eqMask; rw [UInt64.xor_self, isZeroBit_zero]
-
-theorem eqMask_of_ne {a b : UInt64} (h : a ≠ b) : eqMask a b = maskOf 0 := by
-  unfold eqMask; rw [isZeroBit_ne (fun h' => h (UInt64.xor_eq_zero_iff.mp h'))]
-
 /-! ## Base-16 digits of a scalar -/
 
 theorem U256.limb_toNat (a : U256) (ha : a.Valid) (q : Nat) (hq : q < 8) :
