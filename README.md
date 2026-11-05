@@ -19,19 +19,18 @@ It includes:
 With the default options, signatures match libsecp256k1's `secp256k1_ecdsa_sign` byte for byte.
 
 > [!WARNING]
-> Hardening is well advanced, but the library is **not yet suitable for keys with real value**. What is done:
-> - The secret-dependent code passes a valgrind check of its machine code.
-> - Its field and scalar arithmetic is proved correct, including inversion. `p` and `n` are proved prime with Pratt certificates checked by the Lean kernel.
-> - Its point addition and doubling are proved to implement the elliptic curve group law, in every case.
-> - It agrees with libsecp256k1 on 100,000 fuzzed inputs.
+> The library is **not yet suitable for keys with real value**: it has not been independently audited. What is done:
+> - **Proofs.** Key derivation, signing, verification, recovery, every encoding, SHA-256, HMAC and RFC 6979 are proved correct. The proofs run from the constant-time limb code up to Mathlib's elliptic curve group. Examples: every signature from `sign` passes `verify`, `verify` accepts exactly the valid signatures, public keys are `d • G`, and the DER parser accepts only canonical encodings. Every theorem uses only Lean's standard axioms.
+> - **Side channels.** The secret-dependent code passes a valgrind check of its machine code. The scalar, the projective coordinates and the signing equation are blinded.
+> - **Testing.** It agrees with libsecp256k1 on 100,000 fuzzed inputs and on all Wycheproof vectors.
 >
 > However:
-> - secrets are not wiped from memory
-> - the windowed scalar multiplication loop is tested, but not proved to compute `k • P`
-> - key generation depends on Lean's undocumented choice of randomness source (currently the OS generator)
 > - nothing has been audited
+> - secrets are not wiped from memory
+> - the machine-code checks cover x86-64 Linux only, and the proofs are about the Lean code, not the compiled binary
+> - key generation and hedged signing depend on Lean's undocumented choice of randomness source (currently the OS generator)
 >
-> See [what remains](#what-remains).
+> See [ASSURANCE.md](ASSURANCE.md) for what is claimed, what you must trust, and how to check it, and [what remains](#what-remains).
 
 ## Usage
 
@@ -125,6 +124,7 @@ Lower-level modules:
 - `Secp256k1.BytesProofs`: round trips for the big-endian conversions, compact signatures and private keys.
 - `Secp256k1.DERProofs`: the DER signature encoding round-trips, and the strict parser accepts only canonical encodings.
 - `Secp256k1.SHA256Spec`, `Secp256k1.SHA256Proofs`: a FIPS 180-4 / RFC 2104 specification of SHA-256 and HMAC, and proofs that the implementation computes it.
+- `Secp256k1.RFC6979Proofs`: an RFC 6979 specification of the nonce generator, and proofs that the implementation and `signHash` follow it.
 - [`proofs/`](proofs/README.md): a separate package, depending on Mathlib, for the results that need associativity of the group law.
 
 The type invariants mean that every `PrivateKey` holds a scalar in `[1, n-1]` (checked at runtime, carried as a proof) and every `PublicKey` is a valid curve point. A few properties are proved in Lean, for example:
@@ -169,6 +169,8 @@ The type invariants mean that every `PrivateKey` holds a scalar in `[1, n-1]` (c
   - `SHA256.Spec.hash` and `SHA256.Spec.hmac` transcribe FIPS 180-4 (padding, parsing, the recurrence for `Wₜ`, 64 rounds per block) and RFC 2104, on lists of bytes
   - `SHA256.Spec.K_spec`, `SHA256.Spec.H0_spec`: the round constants and initial hash value are the first 32 bits of the fractional parts of the cube roots of the first 64 primes, and of the square roots of the first 8 primes (checked by the kernel)
   - `SHA256.hash_eq_spec`, `SHA256.hmac_eq_spec`: **the implementations compute exactly the specifications**, for every input
+  - `RFC6979.Spec` transcribes the HMAC-DRBG of RFC 6979 §3.2 (steps (b)–(h), `qlen = hlen = 256`) on top of `Spec.hmac`. `RFC6979.findNonce_eq` and `init_rel`: the implementation's candidate loop returns the result for the first candidate, in RFC order, that the caller accepts.
+  - `PrivateKey.signHashRecoverable_eq`: **deterministic signing uses the first of the RFC 6979 candidates that is a valid nonce**, seeded with the private key, `bits2octets(h)` and `extraEntropy`
 - verification is correct (`Secp256k1.JacobianProofs`, and `proofs/` for the last step):
   - `Jacobian.double_correct`, `Jacobian.add_correct`, `Jacobian.toPoint_eq`: the Jacobian formulas implement the group law, including `𝒪`, `P + P` and `P + (-P)`
   - `Point.smulAdd_eq` and `Secp256k1Proofs.toW_smulAdd` (Mathlib): Shamir's trick `Point.smulAdd a A b B` computes `a • A + b • B`
@@ -234,9 +236,7 @@ Only after these points are values converted to `Nat` (`grep -rn declassify Secp
 
 - **Memory hygiene.** Secrets are not wiped. Lean values are immutable and reference-counted, so copies of the key and nonce limbs end up in freed memory. Wiping them needs runtime support, not just a C binding.
 - **Randomness.** In Lean v4.35.0, `IO.getRandomBytes` reads `/dev/urandom` on Unix-like systems and calls `BCryptGenRandom` on Windows (`src/runtime/io.cpp`). These are the operating system's cryptographic generators, but Lean doesn't document this as a guarantee, so re-check it when changing toolchains. A `getrandom(2)` binding would also wait for the kernel generator to be seeded at early boot.
-- **Proofs.** Key derivation, signing, verification and recovery are proved end to end, from the limb code to Mathlib's group: public keys are `d • G`, `verify` accepts exactly the signatures satisfying the verification equation, every signature from `sign` passes `verify`, and `recover?` returns the signer's key. SHA-256 and HMAC are proved against a transcription of FIPS 180-4 and RFC 2104. Not proved:
-  - RFC 6979 against a separate specification. Its code (`Secp256k1.RFC6979`) is a step-by-step transcription of the RFC on top of the verified HMAC, and the signing proofs hold for whatever nonce it produces.
-  - that the specifications themselves match the standards. That is a matter of reading `Secp256k1.SHA256Spec` side by side with FIPS 180-4, apart from the round constants, which are checked against their definitions.
+- **Proofs.** Key derivation, signing, verification and recovery are proved end to end, from the limb code to Mathlib's group: public keys are `d • G`, `verify` accepts exactly the signatures satisfying the verification equation, every signature from `sign` passes `verify`, and `recover?` returns the signer's key. SHA-256, HMAC and the RFC 6979 nonce generator are proved against transcriptions of FIPS 180-4, RFC 2104 and RFC 6979. Not proved: that the specifications themselves match the standards. That is a matter of reading `Secp256k1.SHA256Spec` and `RFC6979.Spec` side by side with the documents, apart from the SHA-256 round constants, which are checked against their definitions.
 - **Platforms.** The valgrind and timing checks cover x86-64 Linux with the bundled toolchain. Other platforms and compilers need their own runs.
 - **Fault attacks.** `verifyAfterSign := true` checks each signature before releasing it. The scalar, the projective coordinates and the signing equation are blinded (see above). By default the blinding values are derived from the secrets alone, so repeated signatures of the same message repeat the same computation. `signHedged` (or any fresh `extraEntropy`) varies the nonce and all blinding values on every call, at the cost of depending on the system's random number generator.
 - **Assurance.** An independent audit.
