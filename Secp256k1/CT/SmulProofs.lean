@@ -89,6 +89,48 @@ theorem Scalar.nibble_lt (k : Scalar) (w : Nat) : (k.nibble w).toNat < 16 := by
   rw [this, Nat.and_two_pow_sub_one_eq_mod]
   exact Nat.mod_lt _ (by decide)
 
+/-! ## Base-16 digits of a 288-bit value (scalar blinding) -/
+
+/-- Limbs below `2³²`. -/
+def U288.Valid (t : U288) : Prop := t.low.Valid ∧ t.l8.toNat < 2 ^ 32
+
+theorem U288.limb_toNat (t : U288) (ht : t.Valid) (q : Nat) (hq : q < 9) :
+    (t.limb q).toNat = t.toNat / 2 ^ (32 * q) % 2 ^ 32 := by
+  obtain ⟨⟨h0, h1, h2, h3, h4, h5, h6, h7⟩, h8⟩ := ht
+  simp only [U288.low] at h0 h1 h2 h3 h4 h5 h6 h7
+  have : q = 0 ∨ q = 1 ∨ q = 2 ∨ q = 3 ∨ q = 4 ∨ q = 5 ∨ q = 6 ∨ q = 7 ∨ q = 8 := by omega
+  rcases this with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+    simp only [U288.limb, U288.toNat, U288.low, U256.toNat] <;> omega
+
+theorem U288.nibble_toNat (t : U288) (ht : t.Valid) (w : Nat) (hw : w < 72) :
+    (t.nibble w).toNat = t.toNat / 16 ^ w % 16 := by
+  have hq : w / 8 < 9 := by omega
+  have hr : w % 8 < 8 := Nat.mod_lt _ (by decide)
+  have hshift : (4 * (w % 8)).toUInt64.toNat % 64 = 4 * (w % 8) := by
+    rw [Nat.toUInt64_eq, UInt64.toNat_ofNat']; omega
+  simp only [U288.nibble, UInt64.toNat_and, UInt64.toNat_shiftRight, hshift,
+    Nat.shiftRight_eq_div_pow]
+  have : (0xF : UInt64).toNat = 2 ^ 4 - 1 := by decide
+  rw [this, Nat.and_two_pow_sub_one_eq_mod, U288.limb_toNat _ ht _ hq,
+    ← nibble_of_word _ _ hr, Nat.div_div_eq_div_mul, ← Nat.pow_add]
+  have hw' : 32 * (w / 8) + 4 * (w % 8) = 4 * w := by omega
+  rw [hw', Nat.pow_mul]
+
+theorem U288.nibble_lt (t : U288) (w : Nat) : (t.nibble w).toNat < 16 := by
+  simp only [U288.nibble, UInt64.toNat_and]
+  have : (0xF : UInt64).toNat = 2 ^ 4 - 1 := by decide
+  rw [this, Nat.and_two_pow_sub_one_eq_mod]
+  exact Nat.mod_lt _ (by decide)
+
+/-- **The blinded scalar is `k + m·n`.** -/
+theorem Scalar.blindedWide_spec (k : Scalar) (hk : k.val.Valid) {m : UInt64}
+    (hm : m.toNat < 2 ^ 32) :
+    (k.blindedWide m).Valid ∧ (k.blindedWide m).toNat = k.toNat + m.toNat * n := by
+  have ⟨e, h8⟩ := U256.mulAddRow_toNat k.val m nMod.m hk hm nMod_valid.m_valid
+  refine ⟨⟨mulAddRow_low_valid _ _ _, h8⟩, ?_⟩
+  rw [Scalar.blindedWide, e, nMod_valid.m_eq]
+  rfl
+
 namespace PPoint
 
 /-! ## Lookup -/
@@ -197,6 +239,29 @@ theorem smulTable_go_correct {T : Array PPoint} {A : Point} (hA : A.OnCurve) (hT
     simp only [Point.windowSpec]
     exact smulTable_go_correct hA hT hTi k w _ _ (addSpec_onCurve hB4 (Point.mulSpec_onCurve hA _))
       hadd
+
+theorem smulDigits_correct {T : Array PPoint} {A : Point} (hA : A.OnCurve) (hT : T.size = 16)
+    (hTi : ∀ i (h : i < T.size), T[i].Represents (A.mulSpec i)) (digit : Nat → UInt64)
+    (hd : ∀ w, (digit w).toNat < 16) :
+    ∀ (w : Nat) (acc : PPoint) (B : Point), B.OnCurve → acc.Represents B →
+      (smulDigits T digit w acc).Represents (A.windowSpec (fun w => (digit w).toNat) w B)
+  | 0, _, _, _, h => h
+  | w + 1, acc, B, hB, h => by
+    have hB1 := Point.dbl_onCurve hB
+    have hB2 := Point.dbl_onCurve hB1
+    have hB3 := Point.dbl_onCurve hB2
+    have hB4 := Point.dbl_onCurve hB3
+    have h4 := double_correct hB3 (double_correct hB2 (double_correct hB1 (double_correct hB h)))
+    have hidx : (digit w).toNat < T.size := hT ▸ hd w
+    have hlk := lookup_eq T (digit w) hidx (by rw [hT]; decide)
+    have hadd := add_correct hB4 (Point.mulSpec_onCurve hA _) h4 (hTi _ hidx)
+    have hgo : smulDigits T digit (w + 1) acc =
+        smulDigits T digit w (acc.double.double.double.double.add (lookup T (digit w))) := by
+      conv => lhs; rw [smulDigits.eq_def]
+    rw [hgo, hlk]
+    simp only [Point.windowSpec]
+    exact smulDigits_correct hA hT hTi digit hd w _ _
+      (addSpec_onCurve hB4 (Point.mulSpec_onCurve hA _)) hadd
 
 /-- **Constant-time `k • P` follows the windowed algorithm.** -/
 theorem smul_correct {P : PPoint} {A : Point} (hA : A.OnCurve) (hP : P.Represents A) (k : Scalar) :
@@ -329,14 +394,18 @@ theorem blindInfinity_represents {z : Fe} {w : Fp} (hz : z.R w) (hw : w ≠ 0) :
   show Fe.zero.toFp = 0 ∧ Fe.zero.toFp = 0 ∧ z.toFp ≠ 0
   rw [h0.2, hz.2]; exact ⟨rfl, rfl, hw⟩
 
-/-- **Blinded `k • G` represents the same point as `smulG k`**, for any blinding
-factor. -/
-theorem smulGBlind_correct (k : Scalar) {z : Fe} (hz : z.Valid) :
-    (smulGBlind k z).Represents (G.windowSpec (fun w => (k.nibble w).toNat) 64 .infinity) := by
+-- The 72-window specification unfolds a 72-step recursion.
+set_option maxRecDepth 10000 in
+/-- **Blinded `k • G` follows the windowed algorithm on the digits of `k + m·n`**,
+for any coordinate blinding factor `z`. (That this is `k • G` uses `n • G = 𝒪`;
+see `Secp256k1Proofs.toW_blindSpec`.) -/
+theorem smulGBlind_correct (k : Scalar) {z : Fe} (hz : z.Valid) (m : UInt64) :
+    (smulGBlind k z m).Represents
+      (G.windowSpec (fun w => ((k.blindedWide m).nibble w).toNat) 72 .infinity) := by
   obtain ⟨w, hw, hw0⟩ := Fe.select_nonzero hz
   have hP := scale_represents (ofPoint_represents G) hw hw0
   obtain ⟨hs, hi⟩ := table_correct G_onCurve hP
-  exact smulTable_go_correct G_onCurve hs hi k 64 _ .infinity trivial
+  exact smulDigits_correct G_onCurve hs hi _ (U288.nibble_lt _) 72 _ .infinity trivial
     (blindInfinity_represents hw hw0)
 
 end PPoint
@@ -350,10 +419,11 @@ namespace Secp256k1.ECDSA
 /-- Whenever the computed point is a valid public key (i.e. not `𝒪`), `publicKey`
 returns the point computed by the constant-time scalar multiplication. -/
 theorem PrivateKey.publicKey_point (sk : PrivateKey)
-    (h : (CT.PPoint.smulGBlind sk.scalar (CT.blindingFactor sk.scalar CT.keyBlindTag)).toPoint.isValid
-      = true) :
+    (h : (CT.PPoint.smulGBlind sk.scalar (CT.blindingFactor sk.scalar CT.keyBlindTag)
+      (CT.blindingWord sk.scalar CT.keyWordTag)).toPoint.isValid = true) :
     sk.publicKey.point =
-      (CT.PPoint.smulGBlind sk.scalar (CT.blindingFactor sk.scalar CT.keyBlindTag)).toPoint :=
+      (CT.PPoint.smulGBlind sk.scalar (CT.blindingFactor sk.scalar CT.keyBlindTag)
+        (CT.blindingWord sk.scalar CT.keyWordTag)).toPoint :=
   PublicKey.ofPointD_point h
 
 end Secp256k1.ECDSA

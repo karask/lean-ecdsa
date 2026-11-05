@@ -138,6 +138,21 @@ public; the returned bits are not inspected by any branch. -/
 @[inline] def nibble (a : Scalar) (w : Nat) : UInt64 :=
   (a.val.limb (w / 8) >>> (4 * (w % 8)).toUInt64) &&& 0xF
 
+/-- `a + m·n` as a 288-bit value, for a 32-bit `m` (scalar blinding: the same
+residue modulo `n`). Constant time. -/
+def blindedWide (a : Scalar) (m : UInt64) : U288 := U256.mulAddRow a.val m nMod.m
+
 end Scalar
+
+/-- Limb `i` of a 288-bit value. -/
+@[inline] def U288.limb (t : U288) : Nat → UInt64
+  | 0 => t.l0 | 1 => t.l1 | 2 => t.l2 | 3 => t.l3
+  | 4 => t.l4 | 5 => t.l5 | 6 => t.l6 | 7 => t.l7
+  | 8 => t.l8 | _ => 0
+
+/-- Base-16 digit `w` of a 288-bit value (`w < 72`). Constant time for a
+public `w`. -/
+@[inline] def U288.nibble (t : U288) (w : Nat) : UInt64 :=
+  (t.limb (w / 8) >>> (4 * (w % 8)).toUInt64) &&& 0xF
 
 end Secp256k1.CT

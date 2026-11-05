@@ -129,8 +129,9 @@ def testPoints : TestM Unit := do
   let blinds := [0, 1, 2, p - 1] ++ (List.range 4).map (fun i => prng (450 + i) % p)
   for (k, i) in (scalars.take 12).zipIdx do
     let z := blinds[i % blinds.length]!
-    check s!"smulGBlind {k} z={z % 1000}"
-      ((PPoint.smulGBlind (Scalar.ofNat k) (Fe.ofNat z)).toPoint == k • G)
+    let m : UInt64 := [0, 1, 0xFFFFFFFF, 0x12345678][i % 4]!
+    check s!"smulGBlind {k} z={z % 1000} m={m}"
+      ((PPoint.smulGBlind (Scalar.ofNat k) (Fe.ofNat z) m).toPoint == k • G)
   -- Multiplicative blinding of `s` gives the unblinded value, including `k = 0`.
   for i in [0:8] do
     let d := Scalar.ofNat (prng (470 + i) % n)
@@ -139,7 +140,7 @@ def testPoints : TestM Unit := do
     let c := signCore d k e
     check s!"blinded s {i}" (c.s.toNat == (k.inv * (e + c.r * d)).toNat)
   check "smulGBlind unreduced z"
-    ((PPoint.smulGBlind (Scalar.ofNat 12345) (Fe.ofBytes (ByteArray.replicate 32 0xff))).toPoint
+    ((PPoint.smulGBlind (Scalar.ofNat 12345) (Fe.ofBytes (ByteArray.replicate 32 0xff)) 7).toPoint
       == (12345 : Nat) • G)
   let P := (prng 500 % n) • G
   let T := PPoint.table (PPoint.ofPoint P)

@@ -190,6 +190,7 @@ Secrets are the private key `d` and the nonce `k`. They are handled only as byte
 - **Complete addition formulas** (Renes–Costello–Batina 2016, Algorithms 7 and 9). They are correct for all inputs, including doubling, `P + (-P)` and the point at infinity, so they need no case distinctions.
 - **Fixed-window scalar multiplication.** All 64 4-bit windows of the scalar are processed, each with four doublings and one addition. Every table lookup reads all 16 entries and keeps the wanted one with a mask.
 - **Randomised projective coordinates** (Coron's countermeasure against differential power analysis). For `d • G` and `k • G`, the window table is built from `(z·Gx : z·Gy : z)` and the accumulator starts at `(0 : z : 0)`. So every intermediate coordinate, including the selected table entries, carries a factor that an observer can't predict. `z` is derived from the secret scalar with HMAC-SHA-256, which keeps signatures deterministic and identical. `PPoint.smulGBlind_correct` proves the result represents the same point for every `z`, and the correctness theorems above hold unchanged. The cost is about 2% per signature.
+- **Scalar blinding.** `d • G` and `k • G` use the 72 base-16 digits of `k + m·n` instead of the 64 digits of `k`, for a secret 32-bit `m` derived with HMAC-SHA-256. Since `n • G = 𝒪` this gives the same point, but the window digits, and so the masks used in the table lookups, change from one computation to the next. `Scalar.blindedWide_spec` and `PPoint.smulGBlind_correct` prove the loop computes the windowed algorithm on `k + m·n`. `Secp256k1Proofs.toW_blindSpec` (Mathlib) proves the result is `k • G`. Together with the randomised coordinates, this makes signing about 25% slower.
 - **Multiplicative blinding of the signing equation.** `s` is computed as `(k·b)⁻¹ · (e·b + r·(d·b))` for a secret non-zero `b`, which is derived from `k` with HMAC-SHA-256. The private key is only ever multiplied by `b`, never directly by the public, varying `r`, which would be a classic target for differential power analysis. `blinded_s` proves the result equals `k⁻¹ · (e + r·d)` for every non-zero `b`.
 - **RFC 6979 on bytes.** The key and nonce candidates stay as bytes, and SHA-256 output uses shifts rather than `Nat` division.
 
@@ -209,10 +210,10 @@ Only after these points are values converted to `Nat` (`grep -rn declassify Secp
 
   | Operation | fixed k = 1 | random k | \|t\| |
   | --- | --- | --- | --- |
-  | Reference `k • G` (variable time) | 0.4 µs | 1753 µs | **590.5** (leak) |
-  | Constant-time `k • G` | 1899 µs | 1899 µs | 0.0 |
-  | Constant-time `k⁻¹ mod n` | 215 µs | 216 µs | 2.4 |
-  | `signWithNonce` (with blinding) | 2109 µs | 2116 µs | 0.7 |
+  | Reference `k • G` (variable time) | 0.4 µs | 1868 µs | **201.4** (leak) |
+  | Constant-time `k • G` (unblinded) | 1745 µs | 1745 µs | 0.0 |
+  | Constant-time `k⁻¹ mod n` | 210 µs | 213 µs | 4.0 |
+  | `signWithNonce` (all blinding) | 2711 µs | 2679 µs | 1.1 |
 
 - **Machine code (valgrind).** [`ctgrind/`](ctgrind/README.md) runs key derivation, the signing core, RFC 6979 and the scalar and field arithmetic under valgrind memcheck, with the key and nonce bytes marked as undefined. memcheck reports any branch or memory address in the compiled binary that depends on them. The constant-time code produces **0 errors**. The variable-time reference code, run as a positive control, produces errors, including 510 inside its double-and-add loop. Two further checks confirm the method:
   - A planted secret-indexed table lookup was caught.
@@ -229,7 +230,7 @@ Only after these points are values converted to `Nat` (`grep -rn declassify Secp
 - **Proofs.** Key derivation, signing, verification and recovery are proved end to end, from the limb code to Mathlib's group: public keys are `d • G`, `verify` accepts exactly the signatures satisfying the verification equation, every signature from `sign` passes `verify`, and `recover?` returns the signer's key. Not yet proved:
   - SHA-256, HMAC and RFC 6979 against their specifications (the proofs hold for whatever nonce they produce)
 - **Platforms.** The valgrind and timing checks cover x86-64 Linux with the bundled toolchain. Other platforms and compilers need their own runs.
-- **Fault attacks and blinding.** `verifyAfterSign := true` checks each signature before releasing it. Projective coordinates and the signing equation are blinded (see above). Scalar blinding of `k • G` (`k + m·n`, which randomises the window digits) is not implemented.
+- **Fault attacks.** `verifyAfterSign := true` checks each signature before releasing it. The scalar, the projective coordinates and the signing equation are blinded (see above). The blinding values are derived deterministically from the secrets, so repeated signatures of the same message repeat the same computation. Mixing in fresh randomness would vary them, at the cost of an RNG dependency.
 - **Assurance.** An independent audit.
 
 ## Building and testing
@@ -290,7 +291,7 @@ pip install coincurve ecdsa
 python3 scripts/gen_test_vectors.py > Tests/Vectors.lean
 ```
 
-In one x86-64 Linux container, a signature took about 2.1–2.3 ms and a verification about 3.5 ms.
+In one x86-64 Linux container, a signature took about 2.7 ms (with all blinding) and a verification about 3.5 ms.
 
 ## References
 

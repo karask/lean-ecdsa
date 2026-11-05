@@ -237,27 +237,39 @@ theorem blinded_s {d k e r b : Scalar} (hd : d.Valid) (hk : k.Valid) (he : e.Val
 (`PPoint.smulGBlind_correct`, whatever the blinding factor). -/
 def smulGSpec (k : Scalar) : Point := G.windowSpec (fun w => (k.nibble w).toNat) 64 .infinity
 
+/-- The point computed by the blinded `k • G` (`PPoint.smulGBlind`): the windowed
+algorithm on the 72 base-16 digits of `k + m·n`. With Mathlib it is `k • G`
+(`Secp256k1Proofs.toW_blindSpec`). -/
+def blindSpec (k : Scalar) (m : UInt64) : Point :=
+  G.windowSpec (fun w => ((k.blindedWide m).nibble w).toNat) 72 .infinity
+
+/-- The nonce point `R` computed by `signCore`. -/
+def nonceSpec (k : Scalar) : Point := blindSpec k (blindingWord k nonceWordTag)
+
 /-- `k⁻¹ · (e + r·d) mod n` with `k⁻¹ = k^(n-2)`, in the form `signCore` computes it. -/
 def sSpec (d k e r : Nat) : Nat := k ^ (n - 2) % n * ((e + r * d % n) % n) % n
 
-/-- **The signing core computes ECDSA.** With `R = k • G`:
+/-- **The signing core computes ECDSA.** With `R = k • G` (`nonceSpec k`, the
+blinded windowed algorithm):
 `r = R.x mod n`, `s = k⁻¹ · (e + r·d) mod n`, the recovery id is
 `R.y mod 2 + 2·[R.x ≥ n]`, and `ok ≠ 0` exactly when `k`, `r` and `s` are
 non-zero. -/
 theorem signCore_spec (d k e : Scalar) (hd : d.Valid) (hk : k.Valid) (he : e.Valid) :
     (signCore d k e).r.Valid ∧
-    (signCore d k e).r.toNat = (smulGSpec k).affX.val % n ∧
+    (signCore d k e).r.toNat = (nonceSpec k).affX.val % n ∧
     (signCore d k e).s.Valid ∧
     (signCore d k e).s.toNat = sSpec d.toNat k.toNat e.toNat (signCore d k e).r.toNat ∧
     (signCore d k e).recId.toNat =
-      (smulGSpec k).affY.val % 2 + (if n ≤ (smulGSpec k).affX.val then 2 else 0) ∧
+      (nonceSpec k).affY.val % 2 + (if n ≤ (nonceSpec k).affX.val then 2 else 0) ∧
     ((signCore d k e).ok ≠ 0 ↔
       k.toNat ≠ 0 ∧ (signCore d k e).r.toNat ≠ 0 ∧ (signCore d k e).s.toNat ≠ 0) := by
-  have hrep : (PPoint.smulGBlind k (blindingFactor k nonceBlindTag)).Represents (smulGSpec k) :=
-    PPoint.smulGBlind_correct k (Fe.ofBytes_valid _)
+  have hrep : (PPoint.smulGBlind k (blindingFactor k nonceBlindTag)
+      (blindingWord k nonceWordTag)).Represents (nonceSpec k) :=
+    PPoint.smulGBlind_correct k (Fe.ofBytes_valid _) _
   unfold signCore
-  generalize PPoint.smulGBlind k (blindingFactor k nonceBlindTag) = P at hrep ⊢
-  generalize smulGSpec k = R at hrep ⊢
+  generalize PPoint.smulGBlind k (blindingFactor k nonceBlindTag) (blindingWord k nonceWordTag) = P
+    at hrep ⊢
+  generalize nonceSpec k = R at hrep ⊢
   have ⟨hxR, hyR⟩ := PPoint.toAffine_spec hrep
   generalize P.toAffine = t at hxR hyR ⊢
   obtain ⟨x, y, f⟩ := t
@@ -311,7 +323,7 @@ and the signature is `(r, s₀)` or, after low-S normalisation, `(r, n - s₀)`,
 with bit 0 of the recovery id flipped accordingly. -/
 theorem signWithNonce_spec {sk : PrivateKey} {e : Nat} {k : CT.Scalar} {lowS : Bool}
     {rsig : RecoverableSignature} (hk : k.Valid) (h : signWithNonce sk e k lowS = some rsig) :
-    ∃ x y, CT.smulGSpec k = .affine x y ∧
+    ∃ x y, CT.nonceSpec k = .affine x y ∧
       rsig.sig.r = x.val % n ∧ 0 < rsig.sig.r ∧ rsig.sig.r < n ∧ 0 < k.toNat ∧
       ∃ s₀, s₀ = CT.sSpec sk.scalar.toNat k.toNat (e % n) rsig.sig.r ∧ 0 < s₀ ∧ s₀ < n ∧
       ∃ flip : Bool,
@@ -329,7 +341,7 @@ theorem signWithNonce_spec {sk : PrivateKey} {e : Nat} {k : CT.Scalar} {lowS : B
   · simp [hok0] at h
   obtain ⟨hk0, hr0, hs0⟩ := hok.1 hok0
   simp only [hok0, beq_iff_eq, ↓reduceIte] at h
-  cases hR : CT.smulGSpec k with
+  cases hR : CT.nonceSpec k with
   | infinity =>
     rw [hR] at re
     exact absurd (re.trans rfl) hr0

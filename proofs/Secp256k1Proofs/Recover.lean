@@ -87,7 +87,7 @@ theorem recId_bits (v : Nat) (hv : v < 2) (c : Prop) [Decidable c] (flip : Bool)
 
 /-! ## Recovery -/
 
--- `smulGSpec` unfolds to a 64-step recursion.
+-- `nonceSpec` unfolds to a 72-step recursion.
 set_option maxRecDepth 10000 in
 /-- **Public key recovery returns the signer's key** for every recoverable
 signature produced by `PrivateKey.signHashRecoverable`. -/
@@ -99,10 +99,10 @@ theorem recoverHash_signHashRecoverable {sk : ECDSA.PrivateKey} {h : ByteArray} 
   obtain ⟨x, y, hR, hr, hr0, hrn, hk0, s₀, hs₀, hs0, hsn, flip, hsv, hrec, -⟩ :=
     ECDSA.signWithNonce_spec hk hw
   -- `R = k • G`
-  have hRon : (Point.affine x y).OnCurve := hR ▸ smulGSpec_onCurve k
+  have hRon : (Point.affine x y).OnCurve := hR ▸ nonceSpec_onCurve k
   have hon : y * y = x * x * x + 7 := hRon
   have hRW : toW (.affine x y) hRon = k.toNat • toW G G_onCurve :=
-    (toW_congr hR.symm hRon (smulGSpec_onCurve k)).trans (toW_smulGSpec k hk)
+    (toW_congr hR.symm hRon (nonceSpec_onCurve k)).trans (toW_nonceSpec k hk)
   have hkn : k.toNat ≤ n := hk.2.le
   -- the recovered `x`-coordinate and parity
   have hxp := x.isLt

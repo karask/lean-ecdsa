@@ -152,6 +152,15 @@ where
 /-- Constant-time `k • P`. -/
 def smul (k : Scalar) (P : PPoint) : PPoint := smulTable (table P) k
 
+/-- The windowed loop of `smulTable` for an arbitrary digit sequence
+`digit w ∈ [0, 16)`: four doublings and one table addition per window, from
+window `w - 1` down to `0`. -/
+def smulDigits (T : Array PPoint) (digit : Nat → UInt64) : Nat → PPoint → PPoint
+  | 0, acc => acc
+  | w + 1, acc =>
+    let acc := acc.double.double.double.double
+    smulDigits T digit w (acc.add (lookup T (digit w)))
+
 /-- The window table for the base point `G`, computed once. -/
 def gTable : Array PPoint := table (ofPoint G)
 
@@ -164,15 +173,23 @@ def scale (z : Fe) (P : PPoint) : PPoint := ⟨z * P.X, z * P.Y, z * P.Z⟩
 /-- `G` as a constant-time point. -/
 def gPoint : PPoint := ofPoint G
 
-/-- Constant-time `k • G` with randomised projective coordinates (Coron's
-countermeasure against differential power analysis). The table is built from
-`(z·Gx : z·Gy : z)` and the accumulator starts at `(0 : z : 0)`, so every
-intermediate coordinate, including the selected table entries, carries a factor
-unknown to an observer. `z = 0` is replaced by `1`. The result represents the
-same point as `smulG k` (`PPoint.smulGBlind_correct`). -/
-def smulGBlind (k : Scalar) (z : Fe) : PPoint :=
+/-- Constant-time `k • G` with randomised projective coordinates and a
+randomised scalar.
+
+* **Coordinates** (Coron's countermeasure against differential power
+  analysis): the table is built from `(z·Gx : z·Gy : z)` and the accumulator
+  starts at `(0 : z : 0)`, so every intermediate coordinate, including the
+  selected table entries, carries a factor unknown to an observer. `z = 0` is
+  replaced by `1`.
+* **Scalar**: the 72 base-16 digits of `k + m·n` (for a 32-bit `m`) are used
+  instead of the 64 digits of `k`. Since `n • G = 𝒪` this is the same point, but
+  the digits, and so the table lookups, change with `m`.
+
+The result represents `k • G` (`PPoint.smulGBlind_correct`, and
+`Secp256k1Proofs.toW_blindSpec` with Mathlib). -/
+def smulGBlind (k : Scalar) (z : Fe) (m : UInt64) : PPoint :=
   let z := Fe.select (maskOf z.isZero) Fe.one z
-  smulTable.go (table (scale z gPoint)) k 64 ⟨Fe.zero, z, Fe.zero⟩
+  smulDigits (table (scale z gPoint)) (Scalar.blindedWide k m).nibble 72 ⟨Fe.zero, z, Fe.zero⟩
 
 end PPoint
 

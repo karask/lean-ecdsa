@@ -10,7 +10,8 @@ The part of ECDSA signing that touches the private key `d` and the nonce
   `R = k • G`, `r = R.x mod n`, `s = k⁻¹ · (e + r·d) mod n`,
 
 together with the recovery id and a success flag, all as constant-time values.
-`k • G` uses randomised projective coordinates (`PPoint.smulGBlind`), and `s`
+`k • G` uses randomised projective coordinates and a randomised scalar
+(`PPoint.smulGBlind`), and `s`
 is computed with multiplicative blinding as `(k·b)⁻¹ · (e·b + r·(d·b))`, with
 blinding factors derived from `k` by HMAC-SHA-256.
 The caller then declassifies the outputs, which are published as the
@@ -23,6 +24,17 @@ namespace Secp256k1.CT
 deterministically from a secret scalar with HMAC-SHA-256 (so signatures stay
 deterministic). Unknown to an observer who does not know the scalar. -/
 def blindingFactor (s : Scalar) (tag : ByteArray) : Fe := Fe.ofBytes (SHA256.hmac s.toBytes tag)
+
+/-- A secret 32-bit word derived from a secret scalar with HMAC-SHA-256, for
+scalar blinding (`k + m·n`). -/
+def blindingWord (s : Scalar) (tag : ByteArray) : UInt64 :=
+  (U256.ofBytes (SHA256.hmac s.toBytes tag)).l0
+
+/-- Domain separation for the scalar blinding of the nonce. -/
+def nonceWordTag : ByteArray := "secp256k1-lean/blind/nonce-scalar".toUTF8
+
+/-- Domain separation for the scalar blinding of the private key. -/
+def keyWordTag : ByteArray := "secp256k1-lean/blind/key-scalar".toUTF8
 
 /-- Domain separation for the nonce's blinding factor. -/
 def nonceBlindTag : ByteArray := "secp256k1-lean/blind/nonce".toUTF8
@@ -53,7 +65,8 @@ structure SignCore where
 `e`, in constant time. (`k = 0` gives `R = 𝒪`, whose affine coordinates are
 `0`, so `r = 0` and `ok = 0`.) -/
 def signCore (d k e : Scalar) : SignCore :=
-  let (x, y, _) := (PPoint.smulGBlind k (blindingFactor k nonceBlindTag)).toAffine
+  let (x, y, _) :=
+    (PPoint.smulGBlind k (blindingFactor k nonceBlindTag) (blindingWord k nonceWordTag)).toAffine
   let xv := x.toU256
   let r := Scalar.reduce xv
   -- Multiplicative blinding: `s = (k·b)⁻¹ · (e·b + r·(d·b)) = k⁻¹ · (e + r·d)`.

@@ -34,6 +34,9 @@ lake env lean CheckAxioms.lean
 - `n_smul_G`, `addOrderOf_G`: **`G` has order `n`**. The kernel computes
   `n • G` in projective coordinates (`Secp256k1.windowSpec_n`, in the main
   library) and `n` is prime.
+- `toW_blindSpec`, `smulGBlind_correct`: the blinded constant-time scalar
+  multiplication (randomised coordinates, and the digits of `k + m·n`) computes
+  `k • G`.
 - `publicKey_correct`: **for every private key `d`,
   `PrivateKey.publicKey` returns `d • G`**. There are no hypotheses:
   `PrivateKey` carries `d ∈ [1, n-1]` as a proof, so the fallback branch of

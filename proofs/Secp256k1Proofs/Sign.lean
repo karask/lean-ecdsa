@@ -81,7 +81,7 @@ theorem toW_neg {x y : Fp} (h : (Point.affine x y).OnCurve) :
 
 /-! ## The verification equation -/
 
--- `smulGSpec` unfolds to a 64-step recursion.
+-- `nonceSpec` unfolds to a 72-step recursion.
 set_option maxRecDepth 10000 in
 /-- **ECDSA signatures verify.** For every signature `(r, s)` returned by
 `signWithNonce`, `r, s ∈ [1, n-1]`, and with `w = s⁻¹`, `u₁ = e·w`,
@@ -103,9 +103,9 @@ theorem signWithNonce_verifies {sk : ECDSA.PrivateKey} {e : Nat} {k : CT.Scalar}
     rw [hs]; cases flip <;> simp only [Bool.false_eq_true, ↓reduceIte] <;> omega
   refine ⟨hr0, hrn, hsr.1, hsr.2, ?_⟩
   -- `R = k • G` and `Q = d • G`
-  have hRon : (Point.affine x y).OnCurve := hR ▸ smulGSpec_onCurve k
+  have hRon : (Point.affine x y).OnCurve := hR ▸ nonceSpec_onCurve k
   have hRW : toW (.affine x y) hRon = k.toNat • toW G G_onCurve :=
-    (toW_congr hR.symm hRon (smulGSpec_onCurve k)).trans (toW_smulGSpec k hk)
+    (toW_congr hR.symm hRon (nonceSpec_onCurve k)).trans (toW_nonceSpec k hk)
   obtain ⟨hQ, hQW⟩ := publicKey_correct sk
   rw [toW_congr rfl _ hQ, hQW, smul_smul, ← add_nsmul]
   -- `u₁ + u₂·d = s⁻¹(e + r·d) = ±k (mod n)`
