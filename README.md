@@ -166,6 +166,9 @@ The type invariants mean that every `PrivateKey` holds a scalar in `[1, n-1]` (c
   - `Point.smulAdd_eq` and `Secp256k1Proofs.toW_smulAdd` (Mathlib): Shamir's trick `Point.smulAdd a A b B` computes `a • A + b • B`
   - `Secp256k1Proofs.verifyHash_eq_true_iff` (Mathlib): `verifyHash` returns `true` exactly for signatures satisfying the verification equation (with `r, s ∈ [1, n-1]`, and low-S if required). So it accepts every valid signature and rejects every invalid one.
   - `Secp256k1Proofs.verify_sign` (Mathlib): **every signature produced by `PrivateKey.sign` passes `PublicKey.verify`** for the signer's public key, also with `requireLowS` when signing used `lowS`
+- recovery is correct (`proofs/`):
+  - `sqrt?_mul_self`, `lift?_eq`: the square root `a^((p+1)/4)` finds a root of every non-zero square, and `Point.lift?` returns the curve point with the requested `x`-coordinate and parity of `y`
+  - `Secp256k1Proofs.recover_signRecoverable`: **for every recoverable signature produced by `PrivateKey.signRecoverable`, `PublicKey.recover?` returns the signer's public key**. The recovery id selects `R.x` (including `R.x ≥ n`) and the parity of `R.y`, with the low-S flip taken into account.
 
 These theorems depend only on Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`); CI checks this for the Mathlib theorems. Three standalone word lemmas in `Secp256k1.CT.Lemmas` use `bv_decide`, which additionally trusts compiled code; the theorems above don't depend on them.
 
@@ -212,8 +215,7 @@ Only after these points are values converted to `Nat` (`grep -rn declassify Secp
 
 - **Memory hygiene.** Secrets are not wiped. Lean values are immutable and reference-counted, so copies of the key and nonce limbs end up in freed memory. Wiping them needs runtime support, not just a C binding.
 - **Randomness.** In Lean v4.35.0, `IO.getRandomBytes` reads `/dev/urandom` on Unix-like systems and calls `BCryptGenRandom` on Windows (`src/runtime/io.cpp`). These are the operating system's cryptographic generators, but Lean doesn't document this as a guarantee, so re-check it when changing toolchains. A `getrandom(2)` binding would also wait for the kernel generator to be seeded at early boot.
-- **Proofs.** Key derivation, signing and verification are proved end to end, from the limb code to Mathlib's group: public keys are `d • G`, `verify` accepts exactly the signatures satisfying the verification equation, and every signature from `sign` passes `verify`. Not yet proved:
-  - public key recovery
+- **Proofs.** Key derivation, signing, verification and recovery are proved end to end, from the limb code to Mathlib's group: public keys are `d • G`, `verify` accepts exactly the signatures satisfying the verification equation, every signature from `sign` passes `verify`, and `recover?` returns the signer's key. Not yet proved:
   - SHA-256, HMAC and RFC 6979 against their specifications (the proofs hold for whatever nonce they produce), and the DER and SEC 1 encodings
 - **Platforms.** The valgrind and timing checks cover x86-64 Linux with the bundled toolchain. Other platforms and compilers need their own runs.
 - **Fault attacks.** `verifyAfterSign := true` checks each signature before releasing it. Scalar or base-point blinding is not implemented.

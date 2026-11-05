@@ -59,5 +59,13 @@ lake env lean CheckAxioms.lean
 - `verify_sign`: **every signature produced by `PrivateKey.sign` passes
   `PublicKey.verify`** for the signer's public key.
 
+`Secp256k1Proofs/Recover.lean`:
+
+- `sqrt?_mul_self`, `lift?_eq`: `Fp.sqrt?` finds a square root of every
+  non-zero square, and `Point.lift?` returns the point with the requested
+  `x`-coordinate and parity.
+- `recover_signRecoverable`: **public key recovery returns the signer's key**
+  for every recoverable signature produced by `PrivateKey.signRecoverable`.
+
 All of these depend only on `propext`, `Classical.choice` and `Quot.sound`;
 `CheckAxioms.lean` prints them and CI fails on `sorryAx` or `Lean.ofReduceBool`.

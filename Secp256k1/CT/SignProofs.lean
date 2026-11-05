@@ -41,6 +41,9 @@ end Point
 theorem ECDSA.PublicKey.onCurve (pk : PublicKey) : pk.point.OnCurve :=
   Point.onCurve_of_isValid pk.isValid
 
+theorem ECDSA.PublicKey.ofPoint?_point (pk : PublicKey) : PublicKey.ofPoint? pk.point = some pk := by
+  simp only [PublicKey.ofPoint?, pk.isValid, ↓reduceDIte]
+
 theorem Fp.inv_zero : Fp.inv 0 = 0 := by
   apply Fin.ext
   rw [Fp.val_inv, show (0 : Fp).val = 0 from rfl, Nat.zero_pow (show 0 < p - 2 by decide),
