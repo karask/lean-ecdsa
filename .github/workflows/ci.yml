@@ -22,8 +22,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install elan and valgrind
         run: |
-          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
-            | sh -s -- -y --default-toolchain none
+          # Retry: the installer download occasionally fails with a transient HTTP error.
+          set -o pipefail
+          for i in 1 2 3 4 5; do
+            curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+              | sh -s -- -y --default-toolchain none && break
+            echo "elan install failed (attempt $i), retrying"; sleep $((i * 15))
+          done
+          test -x "$HOME/.elan/bin/lake"
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
           sudo apt-get update && sudo apt-get install -y valgrind
       - name: Run ctgrind
@@ -39,8 +45,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install elan
         run: |
-          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
-            | sh -s -- -y --default-toolchain none
+          # Retry: the installer download occasionally fails with a transient HTTP error.
+          set -o pipefail
+          for i in 1 2 3 4 5; do
+            curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+              | sh -s -- -y --default-toolchain none && break
+            echo "elan install failed (attempt $i), retrying"; sleep $((i * 15))
+          done
+          test -x "$HOME/.elan/bin/lake"
           echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
       - name: Fetch the Mathlib cache
         run: lake exe cache get
