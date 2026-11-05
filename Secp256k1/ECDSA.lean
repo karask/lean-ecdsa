@@ -173,10 +173,15 @@ def ofCompact? (bs : ByteArray) : Option Signature :=
     some ⟨bytesToNat (bs.extract 0 32), bytesToNat (bs.extract 32 64)⟩
   else none
 
-/-- DER `INTEGER` with minimal two's-complement content. -/
-private def derInteger (x : Nat) : ByteArray :=
+/-- The content of a DER `INTEGER`: the minimal big-endian bytes of `x`, with a
+`0x00` prefix if they are empty or the top bit is set (two's complement). -/
+def derBody (x : Nat) : ByteArray :=
   let body := natToMinimalBytes x
-  let body := if body.size = 0 || body[0]! ≥ 0x80 then ByteArray.mk #[0] ++ body else body
+  if body.size = 0 || body[0]! ≥ 0x80 then ByteArray.mk #[0] ++ body else body
+
+/-- DER `INTEGER` with minimal two's-complement content. -/
+def derInteger (x : Nat) : ByteArray :=
+  let body := derBody x
   ByteArray.mk #[0x02, body.size.toUInt8] ++ body
 
 /-- DER encoding `SEQUENCE { INTEGER r, INTEGER s }` (for `r, s < 2²⁵⁶`). -/
@@ -185,7 +190,7 @@ def toDER (sig : Signature) : ByteArray :=
   ByteArray.mk #[0x30, body.size.toUInt8] ++ body
 
 /-- Check that `bs[off : off+len]` is a minimally encoded, non-negative DER integer body. -/
-private def derIntegerOk (bs : ByteArray) (off len : Nat) : Bool :=
+def derIntegerOk (bs : ByteArray) (off len : Nat) : Bool :=
   len ≠ 0 &&
   bs[off]! &&& 0x80 == 0 &&
   !(len > 1 && bs[off]! == 0 && bs[off + 1]! &&& 0x80 == 0)

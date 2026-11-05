@@ -19,4 +19,5 @@ import Secp256k1.CT.SignProofs
 import Secp256k1.OrderProofs
 import Secp256k1.JacobianProofs
 import Secp256k1.BytesProofs
+import Secp256k1.DERProofs
 import Secp256k1.ECDSA

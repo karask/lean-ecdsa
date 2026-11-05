@@ -18,3 +18,5 @@ import Secp256k1Proofs
 #print axioms Secp256k1.ECDSA.Signature.ofCompact?_toCompact
 #print axioms Secp256k1.ECDSA.PrivateKey.ofBytes?_toBytes
 #print axioms Secp256k1.natToBytes_bytesToNat
+#print axioms Secp256k1.ECDSA.Signature.ofDER?_toDER
+#print axioms Secp256k1.ECDSA.Signature.toDER_ofDER?

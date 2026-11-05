@@ -122,6 +122,7 @@ Lower-level modules:
 - `Secp256k1.CT.SignProofs`: what the constant-time signing core and `signWithNonce` / `signHash` return.
 - `Secp256k1.JacobianProofs`: the Jacobian reference arithmetic and Shamir's trick, used by verification, implement the group law.
 - `Secp256k1.BytesProofs`: round trips for the big-endian conversions, compact signatures and private keys.
+- `Secp256k1.DERProofs`: the DER signature encoding round-trips, and the strict parser accepts only canonical encodings.
 - [`proofs/`](proofs/README.md): a separate package, depending on Mathlib, for the results that need associativity of the group law.
 
 The type invariants mean that every `PrivateKey` holds a scalar in `[1, n-1]` (checked at runtime, carried as a proof) and every `PublicKey` is a valid curve point. A few properties are proved in Lean, for example:
@@ -175,6 +176,8 @@ The type invariants mean that every `PrivateKey` holds a scalar in `[1, n-1]` (c
   - `Signature.ofCompact?_toCompact`, `Signature.toCompact_ofCompact?`: the 64-byte compact encoding is a bijection between 64-byte arrays and pairs `(r, s)` with `r, s < 2²⁵⁶`
   - `PrivateKey.ofBytes?_toBytes`: serialising and re-parsing a private key returns the same key (through the constant-time limb encoding)
   - `Secp256k1Proofs.PublicKey.ofBytes?_toBytes` (Mathlib): parsing the SEC 1 encoding of a public key, compressed or uncompressed, returns the same key
+  - `Signature.ofDER?_toDER`: decoding the DER encoding of a signature with `r, s < 2²⁵⁶` returns it
+  - `Signature.toDER_ofDER?`: **the strict DER parser accepts only canonical encodings**. Every byte string accepted by `ofDER?` is exactly `toDER` of the result, so an accepted signature cannot be re-encoded into a different accepted byte string. This is the non-malleability property BIP 66 relies on.
 
 These theorems depend only on Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`); CI checks this for the Mathlib theorems. Three standalone word lemmas in `Secp256k1.CT.Lemmas` use `bv_decide`, which additionally trusts compiled code; the theorems above don't depend on them.
 
@@ -223,7 +226,6 @@ Only after these points are values converted to `Nat` (`grep -rn declassify Secp
 - **Randomness.** In Lean v4.35.0, `IO.getRandomBytes` reads `/dev/urandom` on Unix-like systems and calls `BCryptGenRandom` on Windows (`src/runtime/io.cpp`). These are the operating system's cryptographic generators, but Lean doesn't document this as a guarantee, so re-check it when changing toolchains. A `getrandom(2)` binding would also wait for the kernel generator to be seeded at early boot.
 - **Proofs.** Key derivation, signing, verification and recovery are proved end to end, from the limb code to Mathlib's group: public keys are `d • G`, `verify` accepts exactly the signatures satisfying the verification equation, every signature from `sign` passes `verify`, and `recover?` returns the signer's key. Not yet proved:
   - SHA-256, HMAC and RFC 6979 against their specifications (the proofs hold for whatever nonce they produce)
-  - the DER signature encoding (round trip, and that the strict parser accepts only canonical encodings)
 - **Platforms.** The valgrind and timing checks cover x86-64 Linux with the bundled toolchain. Other platforms and compilers need their own runs.
 - **Fault attacks.** `verifyAfterSign := true` checks each signature before releasing it. Scalar or base-point blinding is not implemented.
 - **Assurance.** An independent audit.
