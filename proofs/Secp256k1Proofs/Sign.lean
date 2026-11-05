@@ -88,8 +88,9 @@ set_option maxRecDepth 10000 in
 `u₂ = r·w` modulo `n` (as in `PublicKey.verifyHash`), `u₁ • G + u₂ • Q` is an
 affine point `(x, y)` with `x ≡ r (mod n)`, where `Q` is the signer's public key. -/
 theorem signWithNonce_verifies {sk : ECDSA.PrivateKey} {e : Nat} {k : CT.Scalar} {lowS : Bool}
+    {aux : ByteArray}
     {rsig : ECDSA.RecoverableSignature} (hk : k.Valid)
-    (h : ECDSA.signWithNonce sk e k lowS = some rsig) :
+    (h : ECDSA.signWithNonce sk e k lowS aux = some rsig) :
     0 < rsig.sig.r ∧ rsig.sig.r < n ∧ 0 < rsig.sig.s ∧ rsig.sig.s < n ∧
     ∃ (x y : Fp) (hxy : (Point.affine x y).OnCurve),
       (Fn.ofNat e * Fn.inv (Fn.ofNat rsig.sig.s)).val • toW G G_onCurve +
@@ -103,9 +104,9 @@ theorem signWithNonce_verifies {sk : ECDSA.PrivateKey} {e : Nat} {k : CT.Scalar}
     rw [hs]; cases flip <;> simp only [Bool.false_eq_true, ↓reduceIte] <;> omega
   refine ⟨hr0, hrn, hsr.1, hsr.2, ?_⟩
   -- `R = k • G` and `Q = d • G`
-  have hRon : (Point.affine x y).OnCurve := hR ▸ nonceSpec_onCurve k
+  have hRon : (Point.affine x y).OnCurve := hR ▸ nonceSpec_onCurve k _
   have hRW : toW (.affine x y) hRon = k.toNat • toW G G_onCurve :=
-    (toW_congr hR.symm hRon (nonceSpec_onCurve k)).trans (toW_nonceSpec k hk)
+    (toW_congr hR.symm hRon (nonceSpec_onCurve k _)).trans (toW_nonceSpec k hk _)
   obtain ⟨hQ, hQW⟩ := publicKey_correct sk
   rw [toW_congr rfl _ hQ, hQW, smul_smul, ← add_nsmul]
   -- `u₁ + u₂·d = s⁻¹(e + r·d) = ±k (mod n)`

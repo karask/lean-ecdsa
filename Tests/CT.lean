@@ -139,6 +139,10 @@ def testPoints : TestM Unit := do
     let e := Scalar.ofNat (prng (490 + i) % n)
     let c := signCore d k e
     check s!"blinded s {i}" (c.s.toNat == (k.inv * (e + c.r * d)).toNat)
+    -- The blinding randomness `aux` does not change the result.
+    let c' := signCore d k e (natToBytes (prng (500 + i)) 32)
+    check s!"aux-independent {i}" (c'.r.toNat == c.r.toNat && c'.s.toNat == c.s.toNat &&
+      c'.recId == c.recId && c'.ok == c.ok)
   check "smulGBlind unreduced z"
     ((PPoint.smulGBlind (Scalar.ofNat 12345) (Fe.ofBytes (ByteArray.replicate 32 0xff)) 7).toPoint
       == (12345 : Nat) • G)

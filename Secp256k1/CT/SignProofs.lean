@@ -181,11 +181,11 @@ theorem Scalar.inv_zero {a : Scalar} (ha : a.Valid) (h0 : a.toNat = 0) :
     (Scalar.inv a).toNat = 0 := by
   rw [(Scalar.inv_spec a ha).2, h0, Nat.zero_pow (by decide)]; rfl
 
-theorem blindingScalar_spec (k : Scalar) :
-    (blindingScalar k).Valid ∧ (blindingScalar k).toNat ≠ 0 := by
-  have ⟨bv, _⟩ := Scalar.reduce_spec _ (U256.ofBytes_valid (SHA256.hmac k.toBytes scalarBlindTag))
+theorem blindingScalar_spec (k : Scalar) (aux : ByteArray) :
+    (blindingScalar k aux).Valid ∧ (blindingScalar k aux).toNat ≠ 0 := by
+  have ⟨bv, _⟩ := Scalar.reduce_spec _ (U256.ofBytes_valid (SHA256.hmac k.toBytes (scalarBlindTag ++ aux)))
   unfold blindingScalar Scalar.ofBytesReduce
-  generalize Scalar.reduce (U256.ofBytes (SHA256.hmac k.toBytes scalarBlindTag)) = b at bv ⊢
+  generalize Scalar.reduce (U256.ofBytes (SHA256.hmac k.toBytes (scalarBlindTag ++ aux))) = b at bv ⊢
   dsimp only
   rw [Scalar.isZero_eq bv]
   split
@@ -244,7 +244,8 @@ def blindSpec (k : Scalar) (m : UInt64) : Point :=
   G.windowSpec (fun w => ((k.blindedWide m).nibble w).toNat) 72 .infinity
 
 /-- The nonce point `R` computed by `signCore`. -/
-def nonceSpec (k : Scalar) : Point := blindSpec k (blindingWord k nonceWordTag)
+def nonceSpec (k : Scalar) (aux : ByteArray := .empty) : Point :=
+  blindSpec k (blindingWord k (nonceWordTag ++ aux))
 
 /-- `k⁻¹ · (e + r·d) mod n` with `k⁻¹ = k^(n-2)`, in the form `signCore` computes it. -/
 def sSpec (d k e r : Nat) : Nat := k ^ (n - 2) % n * ((e + r * d % n) % n) % n
@@ -254,22 +255,23 @@ blinded windowed algorithm):
 `r = R.x mod n`, `s = k⁻¹ · (e + r·d) mod n`, the recovery id is
 `R.y mod 2 + 2·[R.x ≥ n]`, and `ok ≠ 0` exactly when `k`, `r` and `s` are
 non-zero. -/
-theorem signCore_spec (d k e : Scalar) (hd : d.Valid) (hk : k.Valid) (he : e.Valid) :
-    (signCore d k e).r.Valid ∧
-    (signCore d k e).r.toNat = (nonceSpec k).affX.val % n ∧
-    (signCore d k e).s.Valid ∧
-    (signCore d k e).s.toNat = sSpec d.toNat k.toNat e.toNat (signCore d k e).r.toNat ∧
-    (signCore d k e).recId.toNat =
-      (nonceSpec k).affY.val % 2 + (if n ≤ (nonceSpec k).affX.val then 2 else 0) ∧
-    ((signCore d k e).ok ≠ 0 ↔
-      k.toNat ≠ 0 ∧ (signCore d k e).r.toNat ≠ 0 ∧ (signCore d k e).s.toNat ≠ 0) := by
-  have hrep : (PPoint.smulGBlind k (blindingFactor k nonceBlindTag)
-      (blindingWord k nonceWordTag)).Represents (nonceSpec k) :=
+theorem signCore_spec (d k e : Scalar) (aux : ByteArray) (hd : d.Valid) (hk : k.Valid)
+    (he : e.Valid) :
+    (signCore d k e aux).r.Valid ∧
+    (signCore d k e aux).r.toNat = (nonceSpec k aux).affX.val % n ∧
+    (signCore d k e aux).s.Valid ∧
+    (signCore d k e aux).s.toNat = sSpec d.toNat k.toNat e.toNat (signCore d k e aux).r.toNat ∧
+    (signCore d k e aux).recId.toNat =
+      (nonceSpec k aux).affY.val % 2 + (if n ≤ (nonceSpec k aux).affX.val then 2 else 0) ∧
+    ((signCore d k e aux).ok ≠ 0 ↔
+      k.toNat ≠ 0 ∧ (signCore d k e aux).r.toNat ≠ 0 ∧ (signCore d k e aux).s.toNat ≠ 0) := by
+  have hrep : (PPoint.smulGBlind k (blindingFactor k (nonceBlindTag ++ aux))
+      (blindingWord k (nonceWordTag ++ aux))).Represents (nonceSpec k aux) :=
     PPoint.smulGBlind_correct k (Fe.ofBytes_valid _) _
   unfold signCore
-  generalize PPoint.smulGBlind k (blindingFactor k nonceBlindTag) (blindingWord k nonceWordTag) = P
+  generalize PPoint.smulGBlind k (blindingFactor k (nonceBlindTag ++ aux)) (blindingWord k (nonceWordTag ++ aux)) = P
     at hrep ⊢
-  generalize nonceSpec k = R at hrep ⊢
+  generalize nonceSpec k aux = R at hrep ⊢
   have ⟨hxR, hyR⟩ := PPoint.toAffine_spec hrep
   generalize P.toAffine = t at hxR hyR ⊢
   obtain ⟨x, y, f⟩ := t
@@ -283,7 +285,7 @@ theorem signCore_spec (d k e : Scalar) (hd : d.Valid) (hk : k.Valid) (he : e.Val
   have ⟨iv, ie⟩ := Scalar.inv_spec _ hk
   have ⟨_, se⟩ := Scalar.mul_spec _ _ iv av
   -- the blinded computation of `s`
-  have ⟨bv, b0⟩ := blindingScalar_spec k
+  have ⟨bv, b0⟩ := blindingScalar_spec k aux
   have hsb := blinded_s hd hk he rv bv b0
   have kbv := (Scalar.mul_spec _ _ hk bv).1
   have dbv := (Scalar.mul_spec _ _ hd bv).1
@@ -322,8 +324,9 @@ namespace ECDSA
 and the signature is `(r, s₀)` or, after low-S normalisation, `(r, n - s₀)`,
 with bit 0 of the recovery id flipped accordingly. -/
 theorem signWithNonce_spec {sk : PrivateKey} {e : Nat} {k : CT.Scalar} {lowS : Bool}
-    {rsig : RecoverableSignature} (hk : k.Valid) (h : signWithNonce sk e k lowS = some rsig) :
-    ∃ x y, CT.nonceSpec k = .affine x y ∧
+    {aux : ByteArray} {rsig : RecoverableSignature} (hk : k.Valid)
+    (h : signWithNonce sk e k lowS aux = some rsig) :
+    ∃ x y, CT.nonceSpec k aux = .affine x y ∧
       rsig.sig.r = x.val % n ∧ 0 < rsig.sig.r ∧ rsig.sig.r < n ∧ 0 < k.toNat ∧
       ∃ s₀, s₀ = CT.sSpec sk.scalar.toNat k.toNat (e % n) rsig.sig.r ∧ 0 < s₀ ∧ s₀ < n ∧
       ∃ flip : Bool,
@@ -331,17 +334,17 @@ theorem signWithNonce_spec {sk : PrivateKey} {e : Nat} {k : CT.Scalar} {lowS : B
         rsig.recId.val = (y.val % 2 + (if n ≤ x.val then 2 else 0)) ^^^ (if flip then 1 else 0) ∧
         (lowS = true → rsig.sig.s ≤ n / 2) := by
   have ⟨ev, ee⟩ := CT.Scalar.ofNat_spec e
-  have hc := CT.signCore_spec sk.scalar k (CT.Scalar.ofNat e) sk.valid hk ev
+  have hc := CT.signCore_spec sk.scalar k (CT.Scalar.ofNat e) aux sk.valid hk ev
   unfold signWithNonce at h
   simp only [CT.declassify] at h
-  generalize CT.signCore sk.scalar k (CT.Scalar.ofNat e) = c at hc h
+  generalize CT.signCore sk.scalar k (CT.Scalar.ofNat e) aux = c at hc h
   obtain ⟨rv, re, sv, se, ride, hok⟩ := hc
   rw [ee] at se
   by_cases hok0 : c.ok = 0
   · simp [hok0] at h
   obtain ⟨hk0, hr0, hs0⟩ := hok.1 hok0
   simp only [hok0, beq_iff_eq, ↓reduceIte] at h
-  cases hR : CT.nonceSpec k with
+  cases hR : CT.nonceSpec k aux with
   | infinity =>
     rw [hR] at re
     exact absurd (re.trans rfl) hr0
@@ -394,7 +397,7 @@ theorem _root_.Secp256k1.RFC6979.findNonce_some {α : Type} {accept : ByteArray 
 theorem PrivateKey.signHashRecoverable_spec {sk : PrivateKey} {h : ByteArray} {lowS : Bool}
     {extra : ByteArray} {verifyAfterSign : Bool} {rsig : RecoverableSignature}
     (hs : sk.signHashRecoverable h lowS extra verifyAfterSign = some rsig) :
-    ∃ k : CT.Scalar, k.Valid ∧ signWithNonce sk (hashToScalar h) k lowS = some rsig := by
+    ∃ k : CT.Scalar, k.Valid ∧ signWithNonce sk (hashToScalar h) k lowS extra = some rsig := by
   have hfilter : ∀ {o : Option RecoverableSignature} {b : Bool} {f : RecoverableSignature → Bool},
       (if b = true then o.filter f else o) = some rsig → o = some rsig := by
     intro o b f hb
@@ -422,7 +425,7 @@ theorem PrivateKey.signHash_spec {sk : PrivateKey} {h : ByteArray} {lowS : Bool}
     {extra : ByteArray} {verifyAfterSign : Bool} {sig : Signature}
     (hs : sk.signHash h lowS extra verifyAfterSign = some sig) :
     ∃ (k : CT.Scalar) (rsig : RecoverableSignature), k.Valid ∧
-      signWithNonce sk (hashToScalar h) k lowS = some rsig ∧ rsig.sig = sig := by
+      signWithNonce sk (hashToScalar h) k lowS extra = some rsig ∧ rsig.sig = sig := by
   unfold PrivateKey.signHash at hs
   cases hr : sk.signHashRecoverable h lowS extra verifyAfterSign with
   | none => simp [hr] at hs

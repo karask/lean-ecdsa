@@ -211,6 +211,15 @@ def testRandomKeys : TestM Unit := do
     check s!"random sign/verify {i}" (pk.verify msg rsig.sig (requireLowS := true))
     check s!"random recover {i}" (PublicKey.recover? msg rsig == some pk)
     check s!"random roundtrip {i}" (PublicKey.ofBytes? pk.toBytes == some pk)
+    -- Hedged signing: fresh randomness every call, still valid and recoverable.
+    let some s1 ← sk.signHedged msg | check "hedged sign" false
+    let some s2 ← sk.signHedged msg | check "hedged sign" false
+    check s!"hedged verify {i}" (pk.verify msg s1 (requireLowS := true) &&
+      pk.verify msg s2 (requireLowS := true))
+    check s!"hedged nonces differ {i}" (s1 != s2)
+    let aux ← IO.getRandomBytes 32
+    let some r3 := sk.signRecoverable msg (extraEntropy := aux) | check "aux sign" false
+    check s!"aux recover {i}" (PublicKey.recover? msg r3 == some pk)
 
 end Tests
 

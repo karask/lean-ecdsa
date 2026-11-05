@@ -45,10 +45,10 @@ def keyBlindTag : ByteArray := "secp256k1-lean/blind/key".toUTF8
 /-- Domain separation for the multiplicative blinding of `s`. -/
 def scalarBlindTag : ByteArray := "secp256k1-lean/blind/s".toUTF8
 
-/-- A secret non-zero scalar derived from `k` with HMAC-SHA-256 (`0` is
-replaced by `1` in constant time). -/
-def blindingScalar (k : Scalar) : Scalar :=
-  let b := Scalar.ofBytesReduce (SHA256.hmac k.toBytes scalarBlindTag)
+/-- A secret non-zero scalar derived from `k` (and optional extra randomness
+`aux`) with HMAC-SHA-256 (`0` is replaced by `1` in constant time). -/
+def blindingScalar (k : Scalar) (aux : ByteArray := .empty) : Scalar :=
+  let b := Scalar.ofBytesReduce (SHA256.hmac k.toBytes (scalarBlindTag ++ aux))
   ⟨U256.select (maskOf b.isZero) U256.one b.val⟩
 
 /-- Output of `signCore`. -/
@@ -63,16 +63,21 @@ structure SignCore where
 
 /-- ECDSA signing with private key `d`, nonce `k` and message representative
 `e`, in constant time. (`k = 0` gives `R = 𝒪`, whose affine coordinates are
-`0`, so `r = 0` and `ok = 0`.) -/
-def signCore (d k e : Scalar) : SignCore :=
+`0`, so `r = 0` and `ok = 0`.)
+
+The blinding values are derived from `k` and `aux`. With fresh random `aux`
+they differ between signatures even of the same message; the result does not
+depend on `aux`. -/
+def signCore (d k e : Scalar) (aux : ByteArray := .empty) : SignCore :=
   let (x, y, _) :=
-    (PPoint.smulGBlind k (blindingFactor k nonceBlindTag) (blindingWord k nonceWordTag)).toAffine
+    (PPoint.smulGBlind k (blindingFactor k (nonceBlindTag ++ aux))
+      (blindingWord k (nonceWordTag ++ aux))).toAffine
   let xv := x.toU256
   let r := Scalar.reduce xv
   -- Multiplicative blinding: `s = (k·b)⁻¹ · (e·b + r·(d·b)) = k⁻¹ · (e + r·d)`.
   -- The private key is only multiplied by the secret `b`, never directly by
   -- the public, varying `r`.
-  let b := blindingScalar k
+  let b := blindingScalar k aux
   let s := (k * b).inv * (e * b + r * (d * b))
   let yOdd := y.toU256.l0 &&& 1
   let xHigh := U256.lt xv nMod.m ^^^ 1

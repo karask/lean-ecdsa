@@ -228,11 +228,14 @@ secret-dependent branches. Its outputs (`r`, `s`, the recovery id and the
 success flag) are then declassified, since they are published as the
 signature, and only then converted to `Nat`.
 
+`aux` is mixed into the side-channel blinding values only; it does not change
+the result.
+
 **Never reuse a nonce across different messages**: two signatures with the
 same `k` reveal the private key. Prefer `PrivateKey.signHash`. -/
-def signWithNonce (sk : PrivateKey) (e : Nat) (k : CT.Scalar) (lowS : Bool := true) :
-    Option RecoverableSignature :=
-  let core := CT.declassify (CT.signCore sk.scalar k (CT.Scalar.ofNat e))
+def signWithNonce (sk : PrivateKey) (e : Nat) (k : CT.Scalar) (lowS : Bool := true)
+    (aux : ByteArray := .empty) : Option RecoverableSignature :=
+  let core := CT.declassify (CT.signCore sk.scalar k (CT.Scalar.ofNat e) aux)
   if core.ok == 0 then none
   else
     let r := core.r.toNat
@@ -293,7 +296,11 @@ namespace PrivateKey
 /-- Sign a message digest, returning the signature and its recovery id.
 
 The nonce is derived deterministically with RFC 6979 (HMAC-SHA-256);
-`extraEntropy` is mixed in as RFC 6979 §3.6 additional data. With
+`extraEntropy` is mixed in as RFC 6979 §3.6 additional data, and into the
+side-channel blinding values. Fresh random `extraEntropy` ("hedged" signing,
+see `signHedged`) makes repeated signatures of the same message use different
+nonces and blinding, which helps against fault and power analysis; the
+signature is still valid either way. With
 `lowS := true` (the default) the result is normalised so that `s ≤ n/2`.
 
 With `verifyAfterSign := true`, the signature is verified against the public
@@ -309,7 +316,7 @@ def signHashRecoverable (sk : PrivateKey) (h : ByteArray) (lowS : Bool := true)
     Option RecoverableSignature :=
   let e := hashToScalar h
   let rsig? := RFC6979.findNonce
-    (fun T => (CT.Scalar.ofBytes? T).bind (signWithNonce sk e · lowS))
+    (fun T => (CT.Scalar.ofBytes? T).bind (signWithNonce sk e · lowS extraEntropy))
     64 (RFC6979.init sk.toBytes h extraEntropy)
   if verifyAfterSign then rsig?.filter (sk.publicKey.verifyHash h ·.sig) else rsig?
 
@@ -330,6 +337,20 @@ def sign (sk : PrivateKey) (msg : ByteArray) (lowS : Bool := true)
     (extraEntropy : ByteArray := .empty) (verifyAfterSign : Bool := false) :
     Option Signature :=
   sk.signHash (SHA256.hash msg) lowS extraEntropy verifyAfterSign
+
+/-- Hedged signing of a message digest: 32 bytes from `IO.getRandomBytes` are
+used as `extraEntropy`, so the nonce and all blinding values are fresh for every
+call (and the result still verifies, by `Secp256k1Proofs.verify_sign`).
+Verification after signing is on by default. -/
+def signHashHedged (sk : PrivateKey) (h : ByteArray) (lowS : Bool := true)
+    (verifyAfterSign : Bool := true) : IO (Option Signature) := do
+  let aux ← IO.getRandomBytes 32
+  return sk.signHash h lowS aux verifyAfterSign
+
+/-- Hedged signing of `SHA-256(msg)`. See `signHashHedged`. -/
+def signHedged (sk : PrivateKey) (msg : ByteArray) (lowS : Bool := true)
+    (verifyAfterSign : Bool := true) : IO (Option Signature) :=
+  sk.signHashHedged (SHA256.hash msg) lowS verifyAfterSign
 
 end PrivateKey
 

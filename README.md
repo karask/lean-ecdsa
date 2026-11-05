@@ -90,7 +90,8 @@ All ECDSA definitions live in `Secp256k1.ECDSA`.
 | `PrivateKey.publicKey` | The public key `d • G` (constant time) |
 | `PublicKey` | Point with a proof that it is on the curve and not `𝒪` |
 | `PublicKey.ofBytes?` / `toBytes (compressed := …)` | Parse or encode a SEC 1 public key |
-| `PrivateKey.sign` / `signHash` | Sign a message or a digest. Options: `lowS := true`, `extraEntropy := …`, `verifyAfterSign := false` (fault countermeasure) |
+| `PrivateKey.sign` / `signHash` | Sign a message or a digest. Options: `lowS := true`, `extraEntropy := …` (mixed into the nonce and the blinding), `verifyAfterSign := false` (fault countermeasure) |
+| `PrivateKey.signHedged` / `signHashHedged` | `IO`: sign with 32 fresh random bytes as `extraEntropy`, and verification after signing on by default |
 | `PrivateKey.signRecoverable` / `signHashRecoverable` | Same as above, also returning the recovery id |
 | `PublicKey.verify` / `verifyHash` | Verify a signature. Option: `requireLowS := false` |
 | `PublicKey.recover?` / `recoverHash?` | Recover the public key from a `RecoverableSignature` |
@@ -191,6 +192,7 @@ Secrets are the private key `d` and the nonce `k`. They are handled only as byte
 - **Fixed-window scalar multiplication.** All 64 4-bit windows of the scalar are processed, each with four doublings and one addition. Every table lookup reads all 16 entries and keeps the wanted one with a mask.
 - **Randomised projective coordinates** (Coron's countermeasure against differential power analysis). For `d • G` and `k • G`, the window table is built from `(z·Gx : z·Gy : z)` and the accumulator starts at `(0 : z : 0)`. So every intermediate coordinate, including the selected table entries, carries a factor that an observer can't predict. `z` is derived from the secret scalar with HMAC-SHA-256, which keeps signatures deterministic and identical. `PPoint.smulGBlind_correct` proves the result represents the same point for every `z`, and the correctness theorems above hold unchanged. The cost is about 2% per signature.
 - **Scalar blinding.** `d • G` and `k • G` use the 72 base-16 digits of `k + m·n` instead of the 64 digits of `k`, for a secret 32-bit `m` derived with HMAC-SHA-256. Since `n • G = 𝒪` this gives the same point, but the window digits, and so the masks used in the table lookups, change from one computation to the next. `Scalar.blindedWide_spec` and `PPoint.smulGBlind_correct` prove the loop computes the windowed algorithm on `k + m·n`. `Secp256k1Proofs.toW_blindSpec` (Mathlib) proves the result is `k • G`. Together with the randomised coordinates, this makes signing about 25% slower.
+- **Hedged signing.** `extraEntropy` is mixed into the RFC 6979 nonce and into every blinding value. `signHedged` / `signHashHedged` supply 32 fresh bytes from `IO.getRandomBytes`. The correctness theorems (`verify_sign`, `recover_signRecoverable`) hold for every `extraEntropy`, and `signCore_spec` holds for every blinding input.
 - **Multiplicative blinding of the signing equation.** `s` is computed as `(k·b)⁻¹ · (e·b + r·(d·b))` for a secret non-zero `b`, which is derived from `k` with HMAC-SHA-256. The private key is only ever multiplied by `b`, never directly by the public, varying `r`, which would be a classic target for differential power analysis. `blinded_s` proves the result equals `k⁻¹ · (e + r·d)` for every non-zero `b`.
 - **RFC 6979 on bytes.** The key and nonce candidates stay as bytes, and SHA-256 output uses shifts rather than `Nat` division.
 
@@ -230,7 +232,7 @@ Only after these points are values converted to `Nat` (`grep -rn declassify Secp
 - **Proofs.** Key derivation, signing, verification and recovery are proved end to end, from the limb code to Mathlib's group: public keys are `d • G`, `verify` accepts exactly the signatures satisfying the verification equation, every signature from `sign` passes `verify`, and `recover?` returns the signer's key. Not yet proved:
   - SHA-256, HMAC and RFC 6979 against their specifications (the proofs hold for whatever nonce they produce)
 - **Platforms.** The valgrind and timing checks cover x86-64 Linux with the bundled toolchain. Other platforms and compilers need their own runs.
-- **Fault attacks.** `verifyAfterSign := true` checks each signature before releasing it. The scalar, the projective coordinates and the signing equation are blinded (see above). The blinding values are derived deterministically from the secrets, so repeated signatures of the same message repeat the same computation. Mixing in fresh randomness would vary them, at the cost of an RNG dependency.
+- **Fault attacks.** `verifyAfterSign := true` checks each signature before releasing it. The scalar, the projective coordinates and the signing equation are blinded (see above). By default the blinding values are derived from the secrets alone, so repeated signatures of the same message repeat the same computation. `signHedged` (or any fresh `extraEntropy`) varies the nonce and all blinding values on every call, at the cost of depending on the system's random number generator.
 - **Assurance.** An independent audit.
 
 ## Building and testing

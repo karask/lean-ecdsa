@@ -99,10 +99,10 @@ theorem recoverHash_signHashRecoverable {sk : ECDSA.PrivateKey} {h : ByteArray} 
   obtain ⟨x, y, hR, hr, hr0, hrn, hk0, s₀, hs₀, hs0, hsn, flip, hsv, hrec, -⟩ :=
     ECDSA.signWithNonce_spec hk hw
   -- `R = k • G`
-  have hRon : (Point.affine x y).OnCurve := hR ▸ nonceSpec_onCurve k
+  have hRon : (Point.affine x y).OnCurve := hR ▸ nonceSpec_onCurve k _
   have hon : y * y = x * x * x + 7 := hRon
   have hRW : toW (.affine x y) hRon = k.toNat • toW G G_onCurve :=
-    (toW_congr hR.symm hRon (nonceSpec_onCurve k)).trans (toW_nonceSpec k hk)
+    (toW_congr hR.symm hRon (nonceSpec_onCurve k _)).trans (toW_nonceSpec k hk _)
   have hkn : k.toNat ≤ n := hk.2.le
   -- the recovered `x`-coordinate and parity
   have hxp := x.isLt

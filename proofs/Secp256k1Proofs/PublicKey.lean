@@ -88,12 +88,13 @@ theorem blindingWord_lt (s : CT.Scalar) (tag : ByteArray) :
   exact (CT.U256.ofBytes_valid _).1
 
 set_option maxRecDepth 10000 in
-theorem nonceSpec_onCurve (k : CT.Scalar) : (CT.nonceSpec k).OnCurve := blindSpec_onCurve _ _
+theorem nonceSpec_onCurve (k : CT.Scalar) (aux : ByteArray) : (CT.nonceSpec k aux).OnCurve :=
+  blindSpec_onCurve _ _
 
 set_option maxRecDepth 10000 in
 /-- The nonce point of `signCore` is `k • G`. -/
-theorem toW_nonceSpec (k : CT.Scalar) (hk : k.Valid) :
-    toW (CT.nonceSpec k) (nonceSpec_onCurve k) = k.toNat • toW G G_onCurve :=
+theorem toW_nonceSpec (k : CT.Scalar) (hk : k.Valid) (aux : ByteArray) :
+    toW (CT.nonceSpec k aux) (nonceSpec_onCurve k aux) = k.toNat • toW G G_onCurve :=
   toW_blindSpec k hk (blindingWord_lt _ _)
 
 set_option maxRecDepth 10000 in
