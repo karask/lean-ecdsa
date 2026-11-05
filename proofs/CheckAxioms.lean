@@ -10,3 +10,5 @@ import Secp256k1Proofs
 #print axioms Secp256k1Proofs.publicKey_correct
 #print axioms Secp256k1Proofs.signWithNonce_verifies
 #print axioms Secp256k1Proofs.sign_verifies
+#print axioms Secp256k1Proofs.verifyHash_eq_true_iff
+#print axioms Secp256k1Proofs.verify_sign

@@ -120,6 +120,7 @@ Lower-level modules:
 - `Secp256k1.CT.ParseProofs`: parsed scalars are in range, which `PrivateKey` keeps as an invariant.
 - `Secp256k1.OrderProofs`: `n • G = 𝒪`, computed by the kernel.
 - `Secp256k1.CT.SignProofs`: what the constant-time signing core and `signWithNonce` / `signHash` return.
+- `Secp256k1.JacobianProofs`: the Jacobian reference arithmetic and Shamir's trick, used by verification, implement the group law.
 - [`proofs/`](proofs/README.md): a separate package, depending on Mathlib, for the results that need associativity of the group law.
 
 The type invariants mean that every `PrivateKey` holds a scalar in `[1, n-1]` (checked at runtime, carried as a proof) and every `PublicKey` is a valid curve point. A few properties are proved in Lean, for example:
@@ -160,6 +161,11 @@ The type invariants mean that every `PrivateKey` holds a scalar in `[1, n-1]` (c
   - `signWithNonce_spec`: the returned signature is `(r, s)` or, after low-S normalisation, `(r, n - s)` with the recovery id flipped to match
   - `signHash_spec`: every signature from `signHash` comes from `signWithNonce` with a valid nonce accepted by the RFC 6979 loop
   - `Secp256k1Proofs.sign_verifies` (Mathlib): every signature `(r, s)` returned by `PrivateKey.sign` satisfies the ECDSA verification equation. `r, s ∈ [1, n-1]`, and with `u₁ = e·s⁻¹`, `u₂ = r·s⁻¹ mod n` (computed as in `verifyHash`), `u₁ • G + u₂ • Q` is an affine point whose `x`-coordinate is `r` modulo `n`.
+- verification is correct (`Secp256k1.JacobianProofs`, and `proofs/` for the last step):
+  - `Jacobian.double_correct`, `Jacobian.add_correct`, `Jacobian.toPoint_eq`: the Jacobian formulas implement the group law, including `𝒪`, `P + P` and `P + (-P)`
+  - `Point.smulAdd_eq` and `Secp256k1Proofs.toW_smulAdd` (Mathlib): Shamir's trick `Point.smulAdd a A b B` computes `a • A + b • B`
+  - `Secp256k1Proofs.verifyHash_eq_true_iff` (Mathlib): `verifyHash` returns `true` exactly for signatures satisfying the verification equation (with `r, s ∈ [1, n-1]`, and low-S if required). So it accepts every valid signature and rejects every invalid one.
+  - `Secp256k1Proofs.verify_sign` (Mathlib): **every signature produced by `PrivateKey.sign` passes `PublicKey.verify`** for the signer's public key, also with `requireLowS` when signing used `lowS`
 
 These theorems depend only on Lean's standard axioms (`propext`, `Classical.choice`, `Quot.sound`); CI checks this for the Mathlib theorems. Three standalone word lemmas in `Secp256k1.CT.Lemmas` use `bv_decide`, which additionally trusts compiled code; the theorems above don't depend on them.
 
@@ -206,8 +212,7 @@ Only after these points are values converted to `Nat` (`grep -rn declassify Secp
 
 - **Memory hygiene.** Secrets are not wiped. Lean values are immutable and reference-counted, so copies of the key and nonce limbs end up in freed memory. Wiping them needs runtime support, not just a C binding.
 - **Randomness.** In Lean v4.35.0, `IO.getRandomBytes` reads `/dev/urandom` on Unix-like systems and calls `BCryptGenRandom` on Windows (`src/runtime/io.cpp`). These are the operating system's cryptographic generators, but Lean doesn't document this as a guarantee, so re-check it when changing toolchains. A `getrandom(2)` binding would also wait for the kernel generator to be seeded at early boot.
-- **Proofs.** Key derivation and signing are proved end to end, from the limb code to Mathlib's group: public keys are `d • G`, and signatures satisfy the verification equation. Not yet proved:
-  - that `verifyHash` computes that equation. It uses the variable-time Jacobian reference arithmetic, which has no proofs yet. Together with the above, this would give "every signature from `sign` passes `verify`".
+- **Proofs.** Key derivation, signing and verification are proved end to end, from the limb code to Mathlib's group: public keys are `d • G`, `verify` accepts exactly the signatures satisfying the verification equation, and every signature from `sign` passes `verify`. Not yet proved:
   - public key recovery
   - SHA-256, HMAC and RFC 6979 against their specifications (the proofs hold for whatever nonce they produce), and the DER and SEC 1 encodings
 - **Platforms.** The valgrind and timing checks cover x86-64 Linux with the bundled toolchain. Other platforms and compilers need their own runs.

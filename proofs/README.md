@@ -49,5 +49,15 @@ lake env lean CheckAxioms.lean
   `n`. This holds for every nonce the RFC 6979 loop can accept, with or
   without low-S normalisation.
 
+`Secp256k1Proofs/Verify.lean`:
+
+- `toW_smulAdd`: Shamir's trick `Point.smulAdd a A b B` (Jacobian
+  coordinates) computes `a • A + b • B`.
+- `verifyHash_eq_true_iff`: **`PublicKey.verifyHash` returns `true` exactly
+  when the signature satisfies the verification equation** (`r, s ∈ [1, n-1]`,
+  low-S if required).
+- `verify_sign`: **every signature produced by `PrivateKey.sign` passes
+  `PublicKey.verify`** for the signer's public key.
+
 All of these depend only on `propext`, `Classical.choice` and `Quot.sound`;
 `CheckAxioms.lean` prints them and CI fails on `sorryAx` or `Lean.ofReduceBool`.

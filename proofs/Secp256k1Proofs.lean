@@ -1,3 +1,4 @@
 import Secp256k1Proofs.GroupLaw
 import Secp256k1Proofs.PublicKey
 import Secp256k1Proofs.Sign
+import Secp256k1Proofs.Verify
