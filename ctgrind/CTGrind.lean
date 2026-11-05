@@ -45,6 +45,8 @@ not branch on them. -/
 def constantTimeCases : List (String × (ByteArray → ByteArray → ByteArray)) := [
   ("public key d • G (with affine conversion)", fun d _ =>
     affineBytes (PPoint.smulG ⟨U256.ofBytes d⟩)),
+  ("blinded public key d • G (as in PrivateKey.publicKey)", fun d _ =>
+    affineBytes (PPoint.smulGBlind ⟨U256.ofBytes d⟩ (blindingFactor ⟨U256.ofBytes d⟩ keyBlindTag))),
   ("k • P for a public point P", fun _ k =>
     affineBytes (PPoint.smul ⟨U256.ofBytes k⟩ publicPoint)),
   ("ECDSA signing core (R = k • G, r, s, recovery id, ok flag)", fun d k =>

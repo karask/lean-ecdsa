@@ -158,6 +158,22 @@ def gTable : Array PPoint := table (ofPoint G)
 /-- Constant-time `k • G`. -/
 def smulG (k : Scalar) : PPoint := smulTable gTable k
 
+/-- `P` with its projective coordinates multiplied by `z` (the same point for `z ≠ 0`). -/
+def scale (z : Fe) (P : PPoint) : PPoint := ⟨z * P.X, z * P.Y, z * P.Z⟩
+
+/-- `G` as a constant-time point. -/
+def gPoint : PPoint := ofPoint G
+
+/-- Constant-time `k • G` with randomised projective coordinates (Coron's
+countermeasure against differential power analysis). The table is built from
+`(z·Gx : z·Gy : z)` and the accumulator starts at `(0 : z : 0)`, so every
+intermediate coordinate, including the selected table entries, carries a factor
+unknown to an observer. `z = 0` is replaced by `1`. The result represents the
+same point as `smulG k` (`PPoint.smulGBlind_correct`). -/
+def smulGBlind (k : Scalar) (z : Fe) : PPoint :=
+  let z := Fe.select (maskOf z.isZero) Fe.one z
+  smulTable.go (table (scale z gPoint)) k 64 ⟨Fe.zero, z, Fe.zero⟩
+
 end PPoint
 
 end Secp256k1.CT

@@ -12,7 +12,7 @@ loop of `CT.PPoint` compute the expected combination of group operations:
   (`acc ↦ 16·acc + (digit w) • A`, with `16·acc` as four doublings).
 * `PPoint.lookup_eq`: the constant-time lookup returns `T[idx]`.
 * `PPoint.table_correct`: `table P` holds representatives of `0 • A, …, 15 • A`.
-* `PPoint.smulTable_correct`, `PPoint.smulG_correct`: the constant-time
+* `PPoint.smulTable_correct`, `PPoint.smulG_correct`, `PPoint.smulGBlind_correct`: the constant-time
   scalar multiplication represents `windowSpec` applied to the base-16 digits
   of the scalar (`Scalar.nibble_toNat`).
 
@@ -286,6 +286,61 @@ theorem toPoint_eq {P : PPoint} {A : Point} (hP : P.Represents A) : P.toPoint = 
 
 end PPoint
 
+/-! ## Randomised projective coordinates -/
+
+theorem Fe.ofBytes_valid (bs : ByteArray) : (Fe.ofBytes bs).Valid := by
+  have ⟨v, e⟩ := pMod.toMont_spec pMod_valid _ (U256.ofBytes_valid bs)
+  refine ⟨v, ?_⟩
+  show (pMod.toMont (U256.ofBytes bs)).toNat < p
+  rw [e]; exact Nat.mod_lt _ (by decide)
+
+/-- Replacing `0` by `1` gives a non-zero field element. -/
+theorem Fe.select_nonzero {z : Fe} (hz : z.Valid) :
+    ∃ w, (Fe.select (maskOf z.isZero) Fe.one z).R w ∧ w ≠ 0 := by
+  have rz : z.R z.toFp := ⟨hz, rfl⟩
+  by_cases h0 : z.toFp = 0
+  · rw [Fe.isZero_eq_one rz h0]
+    refine ⟨1, ?_, by decide⟩
+    show (⟨U256.select (maskOf 1) Fe.one.mont z.mont⟩ : Fe).R 1
+    rw [U256.select_one]; exact Fe.one_R
+  · rw [Fe.isZero_eq_zero rz h0]
+    refine ⟨z.toFp, ?_, h0⟩
+    show (⟨U256.select (maskOf 0) Fe.one.mont z.mont⟩ : Fe).R _
+    rw [U256.select_zero]; exact rz
+
+namespace PPoint
+
+/-- Scaling the coordinates by a non-zero factor represents the same point. -/
+theorem scale_represents {P : PPoint} {A : Point} (hP : P.Represents A) {z : Fe} {w : Fp}
+    (hz : z.R w) (hw : w ≠ 0) : (scale z P).Represents A := by
+  obtain ⟨hx, hy, hzv, hrep⟩ := hP
+  have rX := Fe.R.mul hz ⟨hx, rfl⟩
+  have rY := Fe.R.mul hz ⟨hy, rfl⟩
+  have rZ := Fe.R.mul hz ⟨hzv, rfl⟩
+  refine ⟨rX.1, rY.1, rZ.1, ?_⟩
+  show A.ProjRep (z * P.X).toFp (z * P.Y).toFp (z * P.Z).toFp
+  rw [rX.2, rY.2, rZ.2]
+  exact hrep.smul hw
+
+theorem blindInfinity_represents {z : Fe} {w : Fp} (hz : z.R w) (hw : w ≠ 0) :
+    (⟨Fe.zero, z, Fe.zero⟩ : PPoint).Represents .infinity := by
+  have h0 := Fe.zero_R
+  refine ⟨h0.1, hz.1, h0.1, ?_⟩
+  show Fe.zero.toFp = 0 ∧ Fe.zero.toFp = 0 ∧ z.toFp ≠ 0
+  rw [h0.2, hz.2]; exact ⟨rfl, rfl, hw⟩
+
+/-- **Blinded `k • G` represents the same point as `smulG k`**, for any blinding
+factor. -/
+theorem smulGBlind_correct (k : Scalar) {z : Fe} (hz : z.Valid) :
+    (smulGBlind k z).Represents (G.windowSpec (fun w => (k.nibble w).toNat) 64 .infinity) := by
+  obtain ⟨w, hw, hw0⟩ := Fe.select_nonzero hz
+  have hP := scale_represents (ofPoint_represents G) hw hw0
+  obtain ⟨hs, hi⟩ := table_correct G_onCurve hP
+  exact smulTable_go_correct G_onCurve hs hi k 64 _ .infinity trivial
+    (blindInfinity_represents hw hw0)
+
+end PPoint
+
 end CT
 
 end Secp256k1
@@ -295,8 +350,10 @@ namespace Secp256k1.ECDSA
 /-- Whenever the computed point is a valid public key (i.e. not `𝒪`), `publicKey`
 returns the point computed by the constant-time scalar multiplication. -/
 theorem PrivateKey.publicKey_point (sk : PrivateKey)
-    (h : (CT.PPoint.smulG sk.scalar).toPoint.isValid = true) :
-    sk.publicKey.point = (CT.PPoint.smulG sk.scalar).toPoint :=
+    (h : (CT.PPoint.smulGBlind sk.scalar (CT.blindingFactor sk.scalar CT.keyBlindTag)).toPoint.isValid
+      = true) :
+    sk.publicKey.point =
+      (CT.PPoint.smulGBlind sk.scalar (CT.blindingFactor sk.scalar CT.keyBlindTag)).toPoint :=
   PublicKey.ofPointD_point h
 
 end Secp256k1.ECDSA

@@ -229,4 +229,12 @@ theorem smulG_correct (k : CT.Scalar) (hk : k.Valid) :
       toW A hA = k.toNat • toW G G_onCurve :=
   ⟨_, smulGSpec_onCurve k, CT.PPoint.smulG_correct k, toW_smulGSpec k hk⟩
 
+set_option maxRecDepth 10000 in
+/-- The blinded constant-time `k • G` (randomised projective coordinates) also
+represents `k • G`, for any blinding factor. -/
+theorem smulGBlind_correct (k : CT.Scalar) (hk : k.Valid) {z : CT.Fe} (hz : z.Valid) :
+    ∃ (A : Point) (hA : A.OnCurve), (CT.PPoint.smulGBlind k z).Represents A ∧
+      toW A hA = k.toNat • toW G G_onCurve :=
+  ⟨_, smulGSpec_onCurve k, CT.PPoint.smulGBlind_correct k hz, toW_smulGSpec k hk⟩
+
 end Secp256k1Proofs

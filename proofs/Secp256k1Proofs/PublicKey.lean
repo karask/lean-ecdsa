@@ -58,7 +58,8 @@ and converted to affine coordinates) corresponds to `d • G` in Mathlib's
 elliptic curve group. No hypotheses: `PrivateKey` carries `d ∈ [1, n-1]`. -/
 theorem publicKey_correct (sk : ECDSA.PrivateKey) :
     ∃ h, toW sk.publicKey.point h = sk.scalar.toNat • toW G G_onCurve := by
-  obtain ⟨A, hA, hrep, hW⟩ := smulG_correct sk.scalar sk.valid
+  obtain ⟨A, hA, hrep, hW⟩ := smulGBlind_correct sk.scalar sk.valid
+    (z := CT.blindingFactor sk.scalar CT.keyBlindTag) (CT.Fe.ofBytes_valid _)
   have hpt := CT.PPoint.toPoint_eq hrep
   have hk0 := CT.Scalar.toNat_ne_zero sk.isNonzero
   have hv : A.isValid = true := by

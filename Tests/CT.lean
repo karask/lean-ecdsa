@@ -124,6 +124,16 @@ def testPoints : TestM Unit := do
     n / 2, n - 16, n - 15, n - 2, n - 1] ++ (List.range 12).map (fun i => prng (400 + i) % n)
   for k in scalars do
     check s!"smulG {k}" ((PPoint.smulG (Scalar.ofNat k)).toPoint == k • G)
+  -- Randomised projective coordinates give the same point for any blinding factor,
+  -- including `0` (replaced by `1`) and values that are not reduced modulo `p`.
+  let blinds := [0, 1, 2, p - 1] ++ (List.range 4).map (fun i => prng (450 + i) % p)
+  for (k, i) in (scalars.take 12).zipIdx do
+    let z := blinds[i % blinds.length]!
+    check s!"smulGBlind {k} z={z % 1000}"
+      ((PPoint.smulGBlind (Scalar.ofNat k) (Fe.ofNat z)).toPoint == k • G)
+  check "smulGBlind unreduced z"
+    ((PPoint.smulGBlind (Scalar.ofNat 12345) (Fe.ofBytes (ByteArray.replicate 32 0xff))).toPoint
+      == (12345 : Nat) • G)
   let P := (prng 500 % n) • G
   let T := PPoint.table (PPoint.ofPoint P)
   check "table size" (T.size == 16)

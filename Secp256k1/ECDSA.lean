@@ -123,9 +123,11 @@ def PublicKey.ofPointD (P : Point) : PublicKey :=
 theorem PublicKey.ofPointD_point {P : Point} (h : P.isValid = true) : (ofPointD P).point = P := by
   simp only [ofPointD, ofPoint?, h, ↓reduceDIte]
 
-/-- The public key `Q = d • G`, computed with constant-time scalar multiplication. -/
+/-- The public key `Q = d • G`, computed with constant-time scalar multiplication
+in randomised projective coordinates. -/
 def PrivateKey.publicKey (sk : PrivateKey) : PublicKey :=
-  PublicKey.ofPointD (CT.PPoint.smulG sk.scalar).toPoint
+  PublicKey.ofPointD
+    (CT.PPoint.smulGBlind sk.scalar (CT.blindingFactor sk.scalar CT.keyBlindTag)).toPoint
 
 /-! ## Signatures -/
 

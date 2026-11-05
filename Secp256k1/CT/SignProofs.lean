@@ -141,7 +141,7 @@ theorem PPoint.toAffine_spec {P : PPoint} {A : Point} (hP : P.Represents A) :
 /-! ## The signing core -/
 
 /-- The point `R = k • G` computed by the constant-time scalar multiplication
-(`PPoint.smulG_correct`). -/
+(`PPoint.smulGBlind_correct`, whatever the blinding factor). -/
 def smulGSpec (k : Scalar) : Point := G.windowSpec (fun w => (k.nibble w).toNat) 64 .infinity
 
 /-- `k⁻¹ · (e + r·d) mod n` with `k⁻¹ = k^(n-2)`, in the form `signCore` computes it. -/
@@ -160,9 +160,10 @@ theorem signCore_spec (d k e : Scalar) (hd : d.Valid) (hk : k.Valid) (he : e.Val
       (smulGSpec k).affY.val % 2 + (if n ≤ (smulGSpec k).affX.val then 2 else 0) ∧
     ((signCore d k e).ok ≠ 0 ↔
       k.toNat ≠ 0 ∧ (signCore d k e).r.toNat ≠ 0 ∧ (signCore d k e).s.toNat ≠ 0) := by
-  have hrep : (PPoint.smulG k).Represents (smulGSpec k) := PPoint.smulG_correct k
+  have hrep : (PPoint.smulGBlind k (blindingFactor k nonceBlindTag)).Represents (smulGSpec k) :=
+    PPoint.smulGBlind_correct k (Fe.ofBytes_valid _)
   unfold signCore
-  generalize PPoint.smulG k = P at hrep ⊢
+  generalize PPoint.smulGBlind k (blindingFactor k nonceBlindTag) = P at hrep ⊢
   generalize smulGSpec k = R at hrep ⊢
   have ⟨hxR, hyR⟩ := PPoint.toAffine_spec hrep
   generalize P.toAffine = t at hxR hyR ⊢
