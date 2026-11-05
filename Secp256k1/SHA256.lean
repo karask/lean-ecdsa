@@ -33,7 +33,7 @@ def blockSize : Nat := 64
 /-- Digest size in bytes. -/
 def digestSize : Nat := 32
 
-@[inline] private def rotr (x : UInt32) (k : UInt32) : UInt32 :=
+@[inline] def rotr (x : UInt32) (k : UInt32) : UInt32 :=
   (x >>> k) ||| (x <<< (32 - k))
 
 /-- Message padding: append `0x80`, zeros, and the 64-bit big-endian bit length
@@ -43,45 +43,46 @@ def pad (msg : ByteArray) : ByteArray :=
   let zeros := (120 - m.size % 64) % 64
   m ++ ByteArray.replicate zeros 0 ++ natToBytes (msg.size * 8) 8
 
+/-- The big-endian 32-bit word at byte offset `j`. -/
+@[inline] def readWord (data : ByteArray) (j : Nat) : UInt32 :=
+  (data[j]!.toUInt32 <<< 24) ||| (data[j + 1]!.toUInt32 <<< 16) |||
+    (data[j + 2]!.toUInt32 <<< 8) ||| data[j + 3]!.toUInt32
+
+@[inline] def sigma0 (x : UInt32) : UInt32 := rotr x 7 ^^^ rotr x 18 ^^^ (x >>> 3)
+@[inline] def sigma1 (x : UInt32) : UInt32 := rotr x 17 ^^^ rotr x 19 ^^^ (x >>> 10)
+@[inline] def Sigma0 (x : UInt32) : UInt32 := rotr x 2 ^^^ rotr x 13 ^^^ rotr x 22
+@[inline] def Sigma1 (x : UInt32) : UInt32 := rotr x 6 ^^^ rotr x 11 ^^^ rotr x 25
+
+/-- The 64-word message schedule of the block of `data` at offset `off`. -/
+def schedule (data : ByteArray) (off : Nat) : Array UInt32 :=
+  let w := (List.range 16).foldl (fun w i => w.push (readWord data (off + 4 * i))) (Array.mkEmpty 64)
+  (List.range' 16 48).foldl
+    (fun w i => w.push (w[i - 16]! + sigma0 w[i - 15]! + w[i - 7]! + sigma1 w[i - 2]!)) w
+
+/-- The working variables `a, …, h` of the compression function. -/
+structure Vars where
+  a : UInt32
+  b : UInt32
+  c : UInt32
+  d : UInt32
+  e : UInt32
+  f : UInt32
+  g : UInt32
+  h : UInt32
+
+/-- One round of the compression function, with schedule `w`. -/
+@[inline] def round (w : Array UInt32) (v : Vars) (i : Nat) : Vars :=
+  let t1 := v.h + Sigma1 v.e + ((v.e &&& v.f) ^^^ (~~~v.e &&& v.g)) + K[i]! + w[i]!
+  let t2 := Sigma0 v.a + ((v.a &&& v.b) ^^^ (v.a &&& v.c) ^^^ (v.b &&& v.c))
+  ⟨t1 + t2, v.a, v.b, v.c, v.d + t1, v.e, v.f, v.g⟩
+
 /-- The compression function applied to the 64-byte block of `data` starting
 at offset `off`. -/
-def compress (h : Array UInt32) (data : ByteArray) (off : Nat) : Array UInt32 := Id.run do
-  let mut w : Array UInt32 := Array.mkEmpty 64
-  for i in [0:16] do
-    let j := off + 4 * i
-    w := w.push ((data[j]!.toUInt32 <<< 24) ||| (data[j+1]!.toUInt32 <<< 16) |||
-                 (data[j+2]!.toUInt32 <<< 8) ||| data[j+3]!.toUInt32)
-  for i in [16:64] do
-    let w15 := w[i-15]!
-    let w2 := w[i-2]!
-    let s0 := rotr w15 7 ^^^ rotr w15 18 ^^^ (w15 >>> 3)
-    let s1 := rotr w2 17 ^^^ rotr w2 19 ^^^ (w2 >>> 10)
-    w := w.push (w[i-16]! + s0 + w[i-7]! + s1)
-  let mut a := h[0]!
-  let mut b := h[1]!
-  let mut c := h[2]!
-  let mut d := h[3]!
-  let mut e := h[4]!
-  let mut f := h[5]!
-  let mut g := h[6]!
-  let mut hh := h[7]!
-  for i in [0:64] do
-    let S1 := rotr e 6 ^^^ rotr e 11 ^^^ rotr e 25
-    let ch := (e &&& f) ^^^ (~~~e &&& g)
-    let t1 := hh + S1 + ch + K[i]! + w[i]!
-    let S0 := rotr a 2 ^^^ rotr a 13 ^^^ rotr a 22
-    let maj := (a &&& b) ^^^ (a &&& c) ^^^ (b &&& c)
-    let t2 := S0 + maj
-    hh := g
-    g := f
-    f := e
-    e := d + t1
-    d := c
-    c := b
-    b := a
-    a := t1 + t2
-  return #[h[0]! + a, h[1]! + b, h[2]! + c, h[3]! + d,
-           h[4]! + e, h[5]! + f, h[6]! + g, h[7]! + hh]
+def compress (h : Array UInt32) (data : ByteArray) (off : Nat) : Array UInt32 :=
+  let w := schedule data off
+  let v := (List.range 64).foldl (round w) ⟨h[0]!, h[1]!, h[2]!, h[3]!, h[4]!, h[5]!, h[6]!, h[7]!⟩
+  #[h[0]! + v.a, h[1]! + v.b, h[2]! + v.c, h[3]! + v.d,
+    h[4]! + v.e, h[5]! + v.f, h[6]! + v.g, h[7]! + v.h]
 
 /-- SHA-256 digest of `msg` (32 bytes). -/
 def hash (msg : ByteArray) : ByteArray :=

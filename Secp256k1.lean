@@ -20,4 +20,6 @@ import Secp256k1.OrderProofs
 import Secp256k1.JacobianProofs
 import Secp256k1.BytesProofs
 import Secp256k1.DERProofs
+import Secp256k1.SHA256Spec
+import Secp256k1.SHA256Proofs
 import Secp256k1.ECDSA
