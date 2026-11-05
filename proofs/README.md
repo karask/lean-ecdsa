@@ -67,5 +67,11 @@ lake env lean CheckAxioms.lean
 - `recover_signRecoverable`: **public key recovery returns the signer's key**
   for every recoverable signature produced by `PrivateKey.signRecoverable`.
 
+`Secp256k1Proofs/Encoding.lean`:
+
+- `PublicKey.ofBytes?_toBytes`: **parsing a serialised public key returns the
+  same key**, in the compressed (`02/03 ‖ x`, decompressed with `lift?`) and
+  the uncompressed (`04 ‖ x ‖ y`) SEC 1 form.
+
 All of these depend only on `propext`, `Classical.choice` and `Quot.sound`;
 `CheckAxioms.lean` prints them and CI fails on `sorryAx` or `Lean.ofReduceBool`.

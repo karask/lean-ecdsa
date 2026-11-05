@@ -3,3 +3,4 @@ import Secp256k1Proofs.PublicKey
 import Secp256k1Proofs.Sign
 import Secp256k1Proofs.Verify
 import Secp256k1Proofs.Recover
+import Secp256k1Proofs.Encoding

@@ -108,7 +108,7 @@ def ofBytes (bs : ByteArray) : U256 :=
   ⟨beWord bs 0, beWord bs 1, beWord bs 2, beWord bs 3,
    beWord bs 4, beWord bs 5, beWord bs 6, beWord bs 7⟩
 
-@[inline] private def pushWord (out : ByteArray) (w : UInt64) : ByteArray :=
+@[inline] def pushWord (out : ByteArray) (w : UInt64) : ByteArray :=
   out.push (w >>> 24).toUInt8 |>.push (w >>> 16).toUInt8 |>.push (w >>> 8).toUInt8
     |>.push w.toUInt8
 
