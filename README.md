@@ -190,9 +190,10 @@ Secrets are the private key `d` and the nonce `k`. They are handled only as byte
 - **Complete addition formulas** (Renes–Costello–Batina 2016, Algorithms 7 and 9). They are correct for all inputs, including doubling, `P + (-P)` and the point at infinity, so they need no case distinctions.
 - **Fixed-window scalar multiplication.** All 64 4-bit windows of the scalar are processed, each with four doublings and one addition. Every table lookup reads all 16 entries and keeps the wanted one with a mask.
 - **Randomised projective coordinates** (Coron's countermeasure against differential power analysis). For `d • G` and `k • G`, the window table is built from `(z·Gx : z·Gy : z)` and the accumulator starts at `(0 : z : 0)`. So every intermediate coordinate, including the selected table entries, carries a factor that an observer can't predict. `z` is derived from the secret scalar with HMAC-SHA-256, which keeps signatures deterministic and identical. `PPoint.smulGBlind_correct` proves the result represents the same point for every `z`, and the correctness theorems above hold unchanged. The cost is about 2% per signature.
+- **Multiplicative blinding of the signing equation.** `s` is computed as `(k·b)⁻¹ · (e·b + r·(d·b))` for a secret non-zero `b`, which is derived from `k` with HMAC-SHA-256. The private key is only ever multiplied by `b`, never directly by the public, varying `r`, which would be a classic target for differential power analysis. `blinded_s` proves the result equals `k⁻¹ · (e + r·d)` for every non-zero `b`.
 - **RFC 6979 on bytes.** The key and nonce candidates stay as bytes, and SHA-256 output uses shifts rather than `Nat` division.
 
-The whole secret-dependent part of signing is a single branch-free function, `CT.signCore`. It computes `R = k • G`, `r`, `s = k⁻¹(e + r·d)`, the recovery id and a success flag.
+The whole secret-dependent part of signing is a single branch-free function, `CT.signCore`. It computes `R = k • G`, `r`, `s = k⁻¹(e + r·d)` (blinded as above), the recovery id and a success flag.
 
 Secret-derived values become public in exactly four places, each marked with `CT.declassify`:
 - the signature produced by `signCore`
@@ -204,14 +205,14 @@ Only after these points are values converted to `Nat` (`grep -rn declassify Secp
 
 ### Evidence
 
-- **Timing test.** `lake exe timing [samples]` is a dudect-style test. It times a fixed nonce `k = 1` against random nonces and applies Welch's t-test; `|t| > 4.5` indicates a leak. The old variable-time scalar multiplication is included as a positive control. With 3,000 samples per operation in one x86-64 container:
+- **Timing test.** `lake exe timing [samples]` is a dudect-style test. It times a fixed nonce `k = 1` against random nonces and applies Welch's t-test; `|t| > 4.5` indicates a leak. The old variable-time scalar multiplication is included as a positive control. With 2,000 samples per operation in one x86-64 container:
 
   | Operation | fixed k = 1 | random k | \|t\| |
   | --- | --- | --- | --- |
-  | Reference `k • G` (variable time) | 0.4 µs | 1809 µs | **402.5** (leak) |
-  | Constant-time `k • G` | 1970 µs | 1927 µs | 3.1 |
-  | Constant-time `k⁻¹ mod n` | 246 µs | 245 µs | 0.2 |
-  | `signWithNonce` (with blinding) | 2266 µs | 2252 µs | 0.9 |
+  | Reference `k • G` (variable time) | 0.4 µs | 1753 µs | **590.5** (leak) |
+  | Constant-time `k • G` | 1899 µs | 1899 µs | 0.0 |
+  | Constant-time `k⁻¹ mod n` | 215 µs | 216 µs | 2.4 |
+  | `signWithNonce` (with blinding) | 2109 µs | 2116 µs | 0.7 |
 
 - **Machine code (valgrind).** [`ctgrind/`](ctgrind/README.md) runs key derivation, the signing core, RFC 6979 and the scalar and field arithmetic under valgrind memcheck, with the key and nonce bytes marked as undefined. memcheck reports any branch or memory address in the compiled binary that depends on them. The constant-time code produces **0 errors**. The variable-time reference code, run as a positive control, produces errors, including 510 inside its double-and-add loop. Two further checks confirm the method:
   - A planted secret-indexed table lookup was caught.
@@ -228,7 +229,7 @@ Only after these points are values converted to `Nat` (`grep -rn declassify Secp
 - **Proofs.** Key derivation, signing, verification and recovery are proved end to end, from the limb code to Mathlib's group: public keys are `d • G`, `verify` accepts exactly the signatures satisfying the verification equation, every signature from `sign` passes `verify`, and `recover?` returns the signer's key. Not yet proved:
   - SHA-256, HMAC and RFC 6979 against their specifications (the proofs hold for whatever nonce they produce)
 - **Platforms.** The valgrind and timing checks cover x86-64 Linux with the bundled toolchain. Other platforms and compilers need their own runs.
-- **Fault attacks and blinding.** `verifyAfterSign := true` checks each signature before releasing it. Projective coordinates are randomised (see above), but scalar blinding (`k + m·n`) and blinding of the products with `d` are not implemented.
+- **Fault attacks and blinding.** `verifyAfterSign := true` checks each signature before releasing it. Projective coordinates and the signing equation are blinded (see above). Scalar blinding of `k • G` (`k + m·n`, which randomises the window digits) is not implemented.
 - **Assurance.** An independent audit.
 
 ## Building and testing
@@ -289,7 +290,7 @@ pip install coincurve ecdsa
 python3 scripts/gen_test_vectors.py > Tests/Vectors.lean
 ```
 
-In one x86-64 Linux container, a signature took about 2.3 ms and a verification about 3.5 ms.
+In one x86-64 Linux container, a signature took about 2.1–2.3 ms and a verification about 3.5 ms.
 
 ## References
 

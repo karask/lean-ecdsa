@@ -138,6 +138,99 @@ theorem PPoint.toAffine_spec {P : PPoint} {A : Point} (hP : P.Represents A) :
     first | rw [hX] | rw [hY]
     grind
 
+/-! ## Multiplicative blinding of `s` -/
+
+theorem blind_algebra {x y xi ki E R D : Fn} (h1 : x * y * xi = 1) (h2 : x * ki = 1) :
+    xi * (E * y + R * (D * y)) = ki * (E + R * D) := by grind
+
+/-- A scalar as an element of `Fin n`. -/
+def Scalar.toFn (a : Scalar) : Fn := Fin.ofNat n a.toNat
+
+theorem Scalar.toFn_mul {a b : Scalar} (ha : a.Valid) (hb : b.Valid) :
+    (a * b).toFn = a.toFn * b.toFn := by
+  have ha2 : a.toNat < n := ha.2
+  have hb2 : b.toNat < n := hb.2
+  apply Fin.ext
+  simp only [Scalar.toFn, Fin.val_ofNat, Fin.val_mul, (Scalar.mul_spec a b ha hb).2, Nat.mod_mod]
+  rw [Nat.mod_eq_of_lt ha2, Nat.mod_eq_of_lt hb2]
+
+theorem Scalar.toFn_add {a b : Scalar} (ha : a.Valid) (hb : b.Valid) :
+    (a + b).toFn = a.toFn + b.toFn := by
+  have ha2 : a.toNat < n := ha.2
+  have hb2 : b.toNat < n := hb.2
+  apply Fin.ext
+  simp only [Scalar.toFn, Fin.val_ofNat, Fin.val_add, (Scalar.add_spec a b ha hb).2, Nat.mod_mod]
+  rw [Nat.mod_eq_of_lt ha2, Nat.mod_eq_of_lt hb2]
+
+theorem Scalar.toNat_eq_of_toFn {a b : Scalar} (ha : a.Valid) (hb : b.Valid)
+    (h : a.toFn = b.toFn) : a.toNat = b.toNat := by
+  have ha2 : a.toNat < n := ha.2
+  have hb2 : b.toNat < n := hb.2
+  have := congrArg Fin.val h
+  simp only [Scalar.toFn, Fin.val_ofNat, Nat.mod_eq_of_lt ha2, Nat.mod_eq_of_lt hb2] at this
+  exact this
+
+theorem Scalar.toFn_mul_inv {a : Scalar} (ha : a.Valid) (h0 : a.toNat ≠ 0) :
+    a.toFn * (Scalar.inv a).toFn = 1 := by
+  rw [← Scalar.toFn_mul ha (Scalar.inv_spec a ha).1]
+  apply Fin.ext
+  simp only [Scalar.toFn, Fin.val_ofNat, Scalar.mul_inv a ha h0]
+  rfl
+
+theorem Scalar.inv_zero {a : Scalar} (ha : a.Valid) (h0 : a.toNat = 0) :
+    (Scalar.inv a).toNat = 0 := by
+  rw [(Scalar.inv_spec a ha).2, h0, Nat.zero_pow (by decide)]; rfl
+
+theorem blindingScalar_spec (k : Scalar) :
+    (blindingScalar k).Valid ∧ (blindingScalar k).toNat ≠ 0 := by
+  have ⟨bv, _⟩ := Scalar.reduce_spec _ (U256.ofBytes_valid (SHA256.hmac k.toBytes scalarBlindTag))
+  unfold blindingScalar Scalar.ofBytesReduce
+  generalize Scalar.reduce (U256.ofBytes (SHA256.hmac k.toBytes scalarBlindTag)) = b at bv ⊢
+  dsimp only
+  rw [Scalar.isZero_eq bv]
+  split
+  · rw [U256.select_one]
+    exact ⟨⟨U256.one_valid, by rw [U256.one_toNat]; decide⟩, by rw [Scalar.toNat, U256.one_toNat]; decide⟩
+  · rw [U256.select_zero]
+    exact ⟨bv, ‹_›⟩
+
+/-- **Multiplicative blinding does not change `s`**: for any non-zero `b`,
+`(k·b)⁻¹ · (e·b + r·(d·b)) = k⁻¹ · (e + r·d)` (both are `0` when `k = 0`). -/
+theorem blinded_s {d k e r b : Scalar} (hd : d.Valid) (hk : k.Valid) (he : e.Valid)
+    (hr : r.Valid) (hb : b.Valid) (hb0 : b.toNat ≠ 0) :
+    ((k * b).inv * (e * b + r * (d * b))).toNat = (k.inv * (e + r * d)).toNat := by
+  have kbv := (Scalar.mul_spec k b hk hb).1
+  have dbv := (Scalar.mul_spec d b hd hb).1
+  have ebv := (Scalar.mul_spec e b he hb).1
+  have rdbv := (Scalar.mul_spec r (d * b) hr dbv).1
+  have tv := (Scalar.add_spec _ _ ebv rdbv).1
+  have kbiv := (Scalar.inv_spec _ kbv).1
+  have kiv := (Scalar.inv_spec _ hk).1
+  have rdv := (Scalar.mul_spec r d hr hd).1
+  have uv := (Scalar.add_spec _ _ he rdv).1
+  have hk2 : k.toNat < n := hk.2
+  have hb2 : b.toNat < n := hb.2
+  by_cases hk0 : k.toNat = 0
+  · have hkb0 : (k * b).toNat = 0 := by
+      rw [(Scalar.mul_spec k b hk hb).2, hk0, Nat.zero_mul]; rfl
+    rw [(Scalar.mul_spec _ _ kbiv tv).2, (Scalar.mul_spec _ _ kiv uv).2,
+      Scalar.inv_zero kbv hkb0, Scalar.inv_zero hk hk0]
+    simp
+  · have hkb0 : (k * b).toNat ≠ 0 := by
+      rw [(Scalar.mul_spec k b hk hb).2]
+      intro h
+      rcases IsPrime.dvd_mul n_isPrime (Nat.dvd_of_mod_eq_zero h) with h' | h'
+      · exact hk0 (Nat.eq_zero_of_dvd_of_lt h' hk2)
+      · exact hb0 (Nat.eq_zero_of_dvd_of_lt h' hb2)
+    apply Scalar.toNat_eq_of_toFn (Scalar.mul_spec _ _ kbiv tv).1 (Scalar.mul_spec _ _ kiv uv).1
+    have h1 := Scalar.toFn_mul_inv kbv hkb0
+    have h2 := Scalar.toFn_mul_inv hk hk0
+    rw [Scalar.toFn_mul hk hb] at h1
+    rw [Scalar.toFn_mul kbiv tv, Scalar.toFn_add ebv rdbv, Scalar.toFn_mul he hb,
+      Scalar.toFn_mul hr dbv, Scalar.toFn_mul hd hb, Scalar.toFn_mul kiv uv,
+      Scalar.toFn_add he rdv, Scalar.toFn_mul hr hd]
+    exact blind_algebra h1 h2
+
 /-! ## The signing core -/
 
 /-- The point `R = k • G` computed by the constant-time scalar multiplication
@@ -176,9 +269,16 @@ theorem signCore_spec (d k e : Scalar) (hd : d.Valid) (hk : k.Valid) (he : e.Val
   have ⟨rdv, rde⟩ := Scalar.mul_spec _ _ rv hd
   have ⟨av, ae⟩ := Scalar.add_spec _ _ he rdv
   have ⟨iv, ie⟩ := Scalar.inv_spec _ hk
-  have ⟨sv, se⟩ := Scalar.mul_spec _ _ iv av
+  have ⟨_, se⟩ := Scalar.mul_spec _ _ iv av
+  -- the blinded computation of `s`
+  have ⟨bv, b0⟩ := blindingScalar_spec k
+  have hsb := blinded_s hd hk he rv bv b0
+  have kbv := (Scalar.mul_spec _ _ hk bv).1
+  have dbv := (Scalar.mul_spec _ _ hd bv).1
+  have sv := (Scalar.mul_spec _ _ (Scalar.inv_spec _ kbv).1 (Scalar.add_spec _ _
+    (Scalar.mul_spec _ _ he bv).1 (Scalar.mul_spec _ _ rv dbv).1).1).1
   refine ⟨rv, re, sv, ?_, ?_, ?_⟩
-  · rw [se, ie, ae, rde]; rfl
+  · rw [hsb, se, ie, ae, rde]; rfl
   · have hlt := U256.lt_eq xv nMod_valid.m_valid
     rw [nMod_valid.m_eq, xe] at hlt
     have hy2 : (y.toU256.l0 &&& 1).toNat < 2 := by

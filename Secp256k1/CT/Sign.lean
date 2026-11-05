@@ -10,8 +10,9 @@ The part of ECDSA signing that touches the private key `d` and the nonce
   `R = k • G`, `r = R.x mod n`, `s = k⁻¹ · (e + r·d) mod n`,
 
 together with the recovery id and a success flag, all as constant-time values.
-`k • G` uses randomised projective coordinates (`PPoint.smulGBlind`), with a
-blinding factor derived from `k` by HMAC-SHA-256.
+`k • G` uses randomised projective coordinates (`PPoint.smulGBlind`), and `s`
+is computed with multiplicative blinding as `(k·b)⁻¹ · (e·b + r·(d·b))`, with
+blinding factors derived from `k` by HMAC-SHA-256.
 The caller then declassifies the outputs, which are published as the
 signature anyway.
 -/
@@ -28,6 +29,15 @@ def nonceBlindTag : ByteArray := "secp256k1-lean/blind/nonce".toUTF8
 
 /-- Domain separation for the private key's blinding factor. -/
 def keyBlindTag : ByteArray := "secp256k1-lean/blind/key".toUTF8
+
+/-- Domain separation for the multiplicative blinding of `s`. -/
+def scalarBlindTag : ByteArray := "secp256k1-lean/blind/s".toUTF8
+
+/-- A secret non-zero scalar derived from `k` with HMAC-SHA-256 (`0` is
+replaced by `1` in constant time). -/
+def blindingScalar (k : Scalar) : Scalar :=
+  let b := Scalar.ofBytesReduce (SHA256.hmac k.toBytes scalarBlindTag)
+  ⟨U256.select (maskOf b.isZero) U256.one b.val⟩
 
 /-- Output of `signCore`. -/
 structure SignCore where
@@ -46,7 +56,11 @@ def signCore (d k e : Scalar) : SignCore :=
   let (x, y, _) := (PPoint.smulGBlind k (blindingFactor k nonceBlindTag)).toAffine
   let xv := x.toU256
   let r := Scalar.reduce xv
-  let s := k.inv * (e + r * d)
+  -- Multiplicative blinding: `s = (k·b)⁻¹ · (e·b + r·(d·b)) = k⁻¹ · (e + r·d)`.
+  -- The private key is only multiplied by the secret `b`, never directly by
+  -- the public, varying `r`.
+  let b := blindingScalar k
+  let s := (k * b).inv * (e * b + r * (d * b))
   let yOdd := y.toU256.l0 &&& 1
   let xHigh := U256.lt xv nMod.m ^^^ 1
   let ok := (k.isZero ||| r.isZero ||| s.isZero) ^^^ 1
