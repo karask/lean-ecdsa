@@ -290,7 +290,7 @@ The fuzzer compares the following on random, edge-biased and mutated inputs:
 - public key recovery
 - SEC 1 public key parsing
 
-100,000 cases over five seeds produced no disagreements. With the low-S check deliberately disabled, the fuzzer reports 101 mismatches within 3,000 cases. The one intentional difference is that libsecp256k1 accepts "hybrid" public keys (prefix `0x06`/`0x07`) and this library does not, so the fuzzer doesn't generate them.
+100,000 cases over five seeds produced no disagreements. The run was repeated, again with no disagreements, after the blinding, hedged signing and SHA-256 changes (seeds 11–15, coincurve 21.0.0). With the low-S check deliberately disabled, the fuzzer reports 101 mismatches within 3,000 cases. The one intentional difference is that libsecp256k1 accepts "hybrid" public keys (prefix `0x06`/`0x07`) and this library does not, so the fuzzer doesn't generate them.
 
 To regenerate the vectors:
 
