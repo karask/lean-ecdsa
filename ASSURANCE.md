@@ -51,12 +51,33 @@ SHA-256 and HMAC-SHA-256 are implemented in the library.
 - **Generated C (`scripts/list_c_branches.py`):** every branch in the C code for the `CT` modules tests public data.
 - **Countermeasures:** scalar blinding, randomised projective coordinates, multiplicative blinding of `s`, optional hedging, and optional verify-after-sign. Proofs show none of them changes any result.
 
+### Where secret-derived values become public
+
+Secret-derived values become public only through `CT.declassify` (`grep -rn declassify Secp256k1/`). There are four such places, and each reveals only what is public by design:
+
+| Place | What becomes public | Why that is acceptable |
+| --- | --- | --- |
+| `CT.Scalar.ofBytes?` (`Secp256k1/CT/Field.lean`) | whether 32 bytes encode a value below `n` | For a private key, the caller learns whether the key was accepted anyway. For an RFC 6979 candidate, rejection happens with probability below 2⁻¹²⁷, and the rejected value is never used. |
+| `PrivateKey.ofBytes?` (`Secp256k1/ECDSA.lean`) | whether the key is zero | Part of whether the key is accepted |
+| `signWithNonce` (`Secp256k1/ECDSA.lean`) | the output of `CT.signCore`: `r`, `s`, the recovery id and the success flag | `r`, `s` and the recovery id are the signature. The flag is `0` only if `k`, `r` or `s` is zero, which never happens in practice. |
+| `CT.PPoint.toPoint` (`Secp256k1/CT/Point.lean`) | the affine coordinates of a computed point | Used for the public key `d • G` |
+
+Only after these points are values converted to `Nat` (whose arithmetic is variable time). The valgrind cases cover the code before each of them.
+
 ### Testing
 
 - All Wycheproof secp256k1 ECDSA vectors, in DER, Bitcoin low-S and P1363 forms.
 - Vectors from libsecp256k1 and python-ecdsa.
 - NIST SHA-256 and RFC 4231 HMAC cases.
 - Differential fuzzing against libsecp256k1 (100,000 cases).
+
+Tests and proofs reinforce each other. Each implementation is proved equal to its specification, so every passing vector also checks that the specification gives the standard's answer on that input:
+
+- NIST and RFC 4231 vectors for `SHA256.Spec`
+- libsecp256k1's RFC 6979 signatures for `RFC6979.Spec`
+- Wycheproof's accept/reject verdicts for the verification equation in `verifyHash_eq_true_iff`
+
+This does not replace reading the specifications, but it rules out a specification that is wrong on the tested inputs.
 
 ## What you must trust
 
