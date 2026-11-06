@@ -23,4 +23,5 @@ import Secp256k1.DERProofs
 import Secp256k1.SHA256Spec
 import Secp256k1.SHA256Proofs
 import Secp256k1.RFC6979Proofs
+import Secp256k1.BitcoinCoreProofs
 import Secp256k1.ECDSA

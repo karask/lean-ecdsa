@@ -3,6 +3,8 @@ import Tests.Harness
 import Tests.Vectors
 import Tests.CT
 import Tests.Wycheproof
+import Tests.BitcoinCore
+import Tests.LibsecpUnit
 
 /-!
 # Test suite
@@ -237,6 +239,8 @@ def main : IO UInt32 := do
       testRejection
       testRandomKeys
       testWycheproof
+      testBitcoinCore
+      testLibsecpUnit
       testConstantTime : TestM Unit).run (0, #[])
   let elapsed := (← IO.monoMsNow) - start
   for name in failed do

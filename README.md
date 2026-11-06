@@ -11,18 +11,19 @@ It includes:
   - deterministic nonces (RFC 6979), with optional additional data
   - low-S normalisation (BIP 62/146), on by default
   - public key recovery (recovery id 0–3)
+  - Bitcoin Core's low-R signing (`CKey::Sign`)
 - **Encodings:**
   - SEC 1 public keys, compressed and uncompressed
-  - 64-byte compact signatures
+  - 64-byte compact signatures, and Bitcoin Core's 65-byte recoverable form (`CKey::SignCompact`)
   - strict DER signatures (BIP 66)
 
-With the default options, signatures match libsecp256k1's `secp256k1_ecdsa_sign` byte for byte.
+With the default options, signatures match libsecp256k1's `secp256k1_ecdsa_sign` byte for byte, and `signHashLowR` matches Bitcoin Core's `CKey::Sign`.
 
 > [!WARNING]
 > The library is **not yet suitable for keys with real value**: it has not been independently audited. What is done:
 > - **Proofs.** Key derivation, signing, verification, recovery, every encoding, SHA-256, HMAC and RFC 6979 are proved correct. The proofs run from the constant-time limb code up to Mathlib's elliptic curve group. Examples: every signature from `sign` passes `verify`, `verify` accepts exactly the valid signatures, public keys are `d • G`, and the DER parser accepts only canonical encodings. Every theorem uses only Lean's standard axioms.
 > - **Side channels.** The secret-dependent code passes a valgrind check of its machine code. The scalar, the projective coordinates and the signing equation are blinded.
-> - **Testing.** It agrees with libsecp256k1 on 100,000 fuzzed inputs and on all Wycheproof vectors.
+> - **Testing.** It agrees with libsecp256k1 on 100,000 fuzzed inputs, on all Wycheproof vectors, and on the ECDSA, SHA-256 and RFC 6979 vectors of libsecp256k1's and Bitcoin Core's own unit tests.
 >
 > However:
 > - nothing has been audited
@@ -73,6 +74,10 @@ def demo : IO Unit := do
   let digest := SHA256.hash (SHA256.hash msg)
   let some sig2 := sk.signHash digest | throw (.userError "signing failed")
   IO.println (pk.verifyHash digest sig2 (requireLowS := true))  -- true
+
+  -- Bitcoin Core's CKey::Sign (low R, DER of at most 70 bytes)
+  let some sig3 := sk.signHashLowR digest | throw (.userError "signing failed")
+  IO.println (decide (sig3.toDER.size ≤ 70))              -- true
 ```
 
 `sign` returns `Option` because RFC 6979 may in principle reject nonce candidates. It gives up after 64 rejected candidates, which in practice never happens.
@@ -92,9 +97,11 @@ All ECDSA definitions live in `Secp256k1.ECDSA`.
 | `PrivateKey.sign` / `signHash` | Sign a message or a digest. Options: `lowS := true`, `extraEntropy := …` (mixed into the nonce and the blinding), `verifyAfterSign := false` (fault countermeasure) |
 | `PrivateKey.signHedged` / `signHashHedged` | `IO`: sign with 32 fresh random bytes as `extraEntropy`, and verification after signing on by default |
 | `PrivateKey.signRecoverable` / `signHashRecoverable` | Same as above, also returning the recovery id |
+| `PrivateKey.signHashLowR` | Bitcoin Core's `CKey::Sign`: low-S, and retried with RFC 6979 additional data until `r < 2²⁵⁵`, so the DER encoding is at most 70 bytes. Verification after signing is on by default |
 | `PublicKey.verify` / `verifyHash` | Verify a signature. Option: `requireLowS := false` |
 | `PublicKey.recover?` / `recoverHash?` | Recover the public key from a `RecoverableSignature` |
 | `Signature.toCompact` / `ofCompact?` | Encode or parse a 64-byte `r ‖ s` signature |
+| `RecoverableSignature.toBitcoinCompact` / `ofBitcoinCompact?` | Encode or parse Bitcoin Core's 65-byte form: header `27 + recId (+ 4 if compressed)`, then `r ‖ s` |
 | `Signature.toDER` / `ofDER?` | Encode or parse a strict DER (BIP 66) signature |
 | `Signature.normalize` / `isLowS` | Convert to, or check for, low-S form |
 | `signWithNonce` | Sign with an explicit nonce (a `CT.Scalar`). A reused nonce leaks the private key |
@@ -254,7 +261,7 @@ The Mathlib proofs are a separate package (see [`proofs/README.md`](proofs/READM
 cd proofs && lake exe cache get && lake build
 ```
 
-The test suite runs about 13,300 checks. They include all 1,192 secp256k1 ECDSA verification vectors from [Project Wycheproof](https://github.com/C2SP/wycheproof), in three forms: DER, Bitcoin low-S and P1363. The files are vendored unchanged in `Tests/wycheproof/`, and these vectors probe malformed encodings, out-of-range values and arithmetic edge cases. The test vectors in `Tests/Vectors.lean` come from independent implementations:
+The test suite runs about 14,500 checks. They include all 1,192 secp256k1 ECDSA verification vectors from [Project Wycheproof](https://github.com/C2SP/wycheproof), in three forms: DER, Bitcoin low-S and P1363. The files are vendored unchanged in `Tests/wycheproof/`, and these vectors probe malformed encodings, out-of-range values and arithmetic edge cases. The test vectors in `Tests/Vectors.lean` come from independent implementations:
 
 - **libsecp256k1** (through `coincurve`):
   - public keys, compressed and uncompressed
@@ -265,6 +272,12 @@ The test suite runs about 13,300 checks. They include all 1,192 secp256k1 ECDSA 
   - 20-, 32- and 64-byte digests, to exercise `bits2int` truncation
   - RFC 6979 additional data
 - **Python `hashlib` / `hmac`**: SHA-256 at the one- and two-block padding boundaries, and the HMAC-SHA-256 test cases from RFC 4231.
+- **Bitcoin Core's grinding loop** over libsecp256k1: low-R signatures, including cases that need up to 8 attempts.
+
+The unit tests of the two libraries Bitcoin Core relies on for this are ported as well:
+
+- **Bitcoin Core** `src/test/key_tests.cpp` (`Tests/BitcoinCore.lean`): WIF keys, P2PKH addresses, the deterministic DER and 65-byte compact signatures of `CKey::Sign` and `CKey::SignCompact`, cross-verification and recovery over 16 messages, and the low-R properties of `key_signature_tests`. Bitcoin's double SHA-256, Base58Check and RIPEMD-160 are implemented in the tests and checked against their published vectors.
+- **libsecp256k1** `src/tests.c` and `src/modules/recovery/tests_impl.h` (`Tests/LibsecpUnit.lean`): SHA-256 known outputs and counter (midstate) tests, the RFC 6979 HMAC-DRBG vectors, `run_ecdsa_edge_cases` (verification with `r`, `s` or the message at boundary values, nonces that give `s = 0`, the nonce retry loop, distinct nonces over 1,024 keys and messages) and `test_ecdsa_recovery_edge_cases` (all four recovery ids, DER edge cases, every single-byte change of a DER signature).
 
 Other tests check the group laws, rejection of malformed keys, points and DER encodings, sign/verify/recover round trips with random keys, and the constant-time arithmetic against the reference implementation.
 

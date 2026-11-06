@@ -16,7 +16,8 @@ ECDSA over secp256k1, as in SEC 1 v2 §4.1:
 - signing with RFC 6979 nonces (optionally hedged), with low-S normalisation
 - verification
 - public key recovery
-- encodings: SEC 1 public keys, compact and DER signatures, 32-byte private keys
+- Bitcoin Core's low-R signing (`CKey::Sign`)
+- encodings: SEC 1 public keys, compact and DER signatures, Bitcoin Core's 65-byte recoverable signatures, 32-byte private keys
 
 SHA-256 and HMAC-SHA-256 are implemented in the library.
 
@@ -43,6 +44,8 @@ SHA-256 and HMAC-SHA-256 are implemented in the library.
 | Encodings round-trip; DER parsing is canonical | `ofDER?_toDER`, `toDER_ofDER?`, `PublicKey.ofBytes?_toBytes`, … | `Secp256k1/BytesProofs.lean`, `Secp256k1/DERProofs.lean`, `proofs/…/Encoding.lean` |
 | SHA-256 and HMAC meet FIPS 180-4 and RFC 2104 | `hash_eq_spec`, `hmac_eq_spec`, `K_spec`, `H0_spec` | `Secp256k1/SHA256Spec.lean`, `Secp256k1/SHA256Proofs.lean` |
 | Signing uses the first valid RFC 6979 candidate | `findNonce_eq`, `signHashRecoverable_eq` | `Secp256k1/RFC6979Proofs.lean` |
+| Low-R signing returns a `signHash` signature with `r < 2²⁵⁵` and a DER encoding of at most 70 bytes, and it verifies | `signHashLowR_spec`, `signHashLowR_toDER_size`, `verifyHash_signHashLowR` | `Secp256k1/BitcoinCoreProofs.lean`, `proofs/…/Verify.lean` |
+| The 65-byte recoverable encoding round-trips and is canonical | `ofBitcoinCompact?_toBitcoinCompact`, `toBitcoinCompact_ofBitcoinCompact?` | `Secp256k1/BitcoinCoreProofs.lean` |
 
 ### Side channels (evidence, not proofs)
 
@@ -64,17 +67,21 @@ Secret-derived values become public only through `CT.declassify` (`grep -rn decl
 
 Only after these points are values converted to `Nat` (whose arithmetic is variable time). The valgrind cases cover the code before each of them.
 
+`signHashLowR` (Bitcoin Core's grinding) branches on whether the declassified `r` of each attempt is below `2²⁵⁵`. The number of attempts therefore reveals the top bit of `r` for signatures that are discarded, as in Bitcoin Core.
+
 ### Testing
 
 - All Wycheproof secp256k1 ECDSA vectors, in DER, Bitcoin low-S and P1363 forms.
 - Vectors from libsecp256k1 and python-ecdsa.
 - NIST SHA-256 and RFC 4231 HMAC cases.
+- The ECDSA cases of Bitcoin Core's `key_tests.cpp`: its WIF keys, addresses and deterministic DER and 65-byte signatures.
+- libsecp256k1's own unit vectors: SHA-256 known outputs and midstates, the RFC 6979 HMAC-DRBG outputs, the ECDSA and recovery edge cases.
 - Differential fuzzing against libsecp256k1 (100,000 cases).
 
 Tests and proofs reinforce each other. Each implementation is proved equal to its specification, so every passing vector also checks that the specification gives the standard's answer on that input:
 
 - NIST and RFC 4231 vectors for `SHA256.Spec`
-- libsecp256k1's RFC 6979 signatures for `RFC6979.Spec`
+- libsecp256k1's RFC 6979 signatures and HMAC-DRBG outputs for `RFC6979.Spec`
 - Wycheproof's accept/reject verdicts for the verification equation in `verifyHash_eq_true_iff`
 
 This does not replace reading the specifications, but it rules out a specification that is wrong on the tested inputs.

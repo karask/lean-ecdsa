@@ -4,7 +4,8 @@
 * libsecp256k1 (through the `coincurve` bindings) for key derivation,
   low-S RFC 6979 signatures, DER encoding and public key recovery;
 * `python-ecdsa` for high-S (non-normalised) RFC 6979 signatures, digests
-  longer than 256 bits, and RFC 6979 additional data.
+  longer than 256 bits, and RFC 6979 additional data;
+* Bitcoin Core's low-R grinding loop (`CKey::Sign`), on top of libsecp256k1.
 
 Usage:
     pip install coincurve ecdsa
@@ -53,6 +54,10 @@ MESSAGES = [
 ]
 
 
+def dsha256(b: bytes) -> bytes:
+    return hashlib.sha256(hashlib.sha256(b).digest()).digest()
+
+
 def lean_str(s: str) -> str:
     return '"' + s + '"'
 
@@ -62,6 +67,22 @@ def sign_extra(priv: int, msg: bytes, extra: bytes) -> bytes:
     sk = coincurve.PrivateKey.from_int(priv)
     ndata = ffi.new("unsigned char[32]", extra)
     return sk.sign_recoverable(msg, custom_nonce=(lib.secp256k1_nonce_function_rfc6979, ndata))
+
+
+def bitcoin_core_sign(priv: int, hash32: bytes) -> tuple[int, bytes]:
+    """Bitcoin Core's `CKey::Sign`: libsecp256k1 RFC 6979 signing, retried with
+    `ndata = LE32(counter) || 0^28`, counter = 1, 2, ..., until r < 2^255.
+    Returns the number of attempts and the DER signature."""
+    sk = coincurve.PrivateKey.from_int(priv)
+    der = sk.sign(hash32, hasher=None)
+    attempts = 1
+    while der[3] > 32:  # r needs 33 DER bytes iff r >= 2^255
+        ndata = ffi.new("unsigned char[32]", attempts.to_bytes(4, "little") + bytes(28))
+        der = sk.sign(
+            hash32, hasher=None, custom_nonce=(lib.secp256k1_nonce_function_rfc6979, ndata)
+        )
+        attempts += 1
+    return attempts, der
 
 
 def main() -> None:
@@ -203,6 +224,33 @@ def main() -> None:
                         lean_str(h(s)),
                     )
                 )
+    w(",\n".join(rows))
+    w("]")
+    w("")
+    # Bitcoin Core's low-R grinding on top of libsecp256k1.
+    w("/-- Bitcoin Core `CKey::Sign` (low-R grinding over libsecp256k1):")
+    w("`(priv, hash, attempts, DER sig)`. -/")
+    w("def bitcoinCoreLowR : List (String × String × Nat × String) := [")
+    rows = []
+    cases = [(d, b"grind %d" % j) for d in PRIVS[:8] for j in range(4)]
+    # Add cases that need at least four attempts.
+    j = 0
+    while sum(1 for d, m in cases if bitcoin_core_sign(d, dsha256(m))[0] >= 4) < 6:
+        d = PRIVS[j % len(PRIVS)]
+        if bitcoin_core_sign(d, dsha256(b"grind more %d" % j))[0] >= 4:
+            cases.append((d, b"grind more %d" % j))
+        j += 1
+    for d, msg in cases:
+        hash32 = dsha256(msg)
+        attempts, der = bitcoin_core_sign(d, hash32)
+        rows.append(
+            "  ({}, {}, {}, {})".format(
+                lean_str(d.to_bytes(32, "big").hex()),
+                lean_str(h(hash32)),
+                attempts,
+                lean_str(h(der)),
+            )
+        )
     w(",\n".join(rows))
     w("]")
     w("")

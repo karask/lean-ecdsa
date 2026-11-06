@@ -9,7 +9,8 @@ import Secp256k1Proofs.Sign
   signatures that satisfy the ECDSA verification equation** (`r, s ∈ [1, n-1]`,
   low-S if required, and `u₁ • G + u₂ • Q` affine with `x ≡ r (mod n)`).
 * `verify_sign`: **every signature produced by `PrivateKey.sign` passes
-  `PublicKey.verify`** for the signer's public key.
+  `PublicKey.verify`** for the signer's public key; `verifyHash_signHashLowR`
+  for Bitcoin Core-style low-R signing.
 -/
 
 open Secp256k1
@@ -154,5 +155,13 @@ theorem verify_sign {sk : ECDSA.PrivateKey} {msg : ByteArray} {lowS : Bool}
     (hreq : requireLowS = true → lowS = true) :
     sk.publicKey.verify msg sig requireLowS = true :=
   verifyHash_signHash hs hreq
+
+/-- **Bitcoin Core-style low-R signatures verify** (`PrivateKey.signHashLowR`,
+i.e. `CKey::Sign`), whether or not low S is required. -/
+theorem verifyHash_signHashLowR {sk : ECDSA.PrivateKey} {h : ByteArray} {v : Bool}
+    {sig : ECDSA.Signature} (hs : sk.signHashLowR h v = some sig) (requireLowS : Bool) :
+    sk.publicKey.verifyHash h sig requireLowS = true := by
+  obtain ⟨-, extra, he⟩ := ECDSA.PrivateKey.signHashLowR_spec hs
+  exact verifyHash_signHash he (fun _ => rfl)
 
 end Secp256k1Proofs

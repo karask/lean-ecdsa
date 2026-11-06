@@ -61,6 +61,8 @@ lake env lean CheckAxioms.lean
   low-S if required).
 - `verify_sign`: **every signature produced by `PrivateKey.sign` passes
   `PublicKey.verify`** for the signer's public key.
+- `verifyHash_signHashLowR`: the same for Bitcoin Core-style low-R signing
+  (`PrivateKey.signHashLowR`).
 
 `Secp256k1Proofs/Recover.lean`:
 

@@ -17,6 +17,9 @@ and the compact (64-byte) and strict DER (BIP 66) signature encodings.
 * `PrivateKey.sign` / `PublicKey.verify` hash the message with SHA-256.
 * `PrivateKey.signHash` / `PublicKey.verifyHash` take an already computed
   digest (e.g. a double-SHA-256 Bitcoin sighash).
+* `PrivateKey.signHashLowR` signs as Bitcoin Core's `CKey::Sign` (low R), and
+  `RecoverableSignature.toBitcoinCompact` is the 65-byte format of
+  `CKey::SignCompact`.
 
 Signatures produced with the default options are byte-for-byte identical to
 those of libsecp256k1's `secp256k1_ecdsa_sign`.
@@ -216,6 +219,28 @@ def ofDER? (bs : ByteArray) : Option Signature :=
 
 end Signature
 
+namespace RecoverableSignature
+
+/-- The 65-byte encoding of Bitcoin Core's `CKey::SignCompact` (used for
+message signing): a header byte `27 + recId`, plus 4 if the signer's public key
+is serialised compressed, followed by the compact encoding `r ‖ s`. -/
+def toBitcoinCompact (rsig : RecoverableSignature) (compressed : Bool := true) : ByteArray :=
+  ByteArray.mk #[(27 + rsig.recId.val + if compressed then 4 else 0).toUInt8] ++
+    rsig.sig.toCompact
+
+/-- Parse the encoding of `toBitcoinCompact`: the signature and whether the
+signer's key is compressed. Header bytes outside `27 … 34` are rejected. -/
+def ofBitcoinCompact? (bs : ByteArray) : Option (RecoverableSignature × Bool) :=
+  if bs.size = 65 then
+    let hdr := bs[0]!.toNat
+    if 27 ≤ hdr ∧ hdr ≤ 34 then
+      (Signature.ofCompact? (bs.extract 1 65)).map fun sig =>
+        (⟨sig, Fin.ofNat 4 (hdr - 27)⟩, 31 ≤ hdr)
+    else none
+  else none
+
+end RecoverableSignature
+
 /-- The message representative `e = bits2int(h) mod n` (SEC 1 §4.1.3 step 5). -/
 def hashToScalar (h : ByteArray) : Nat := RFC6979.bits2int h % n
 
@@ -351,6 +376,36 @@ def signHashHedged (sk : PrivateKey) (h : ByteArray) (lowS : Bool := true)
 def signHedged (sk : PrivateKey) (msg : ByteArray) (lowS : Bool := true)
     (verifyAfterSign : Bool := true) : IO (Option Signature) :=
   sk.signHashHedged (SHA256.hash msg) lowS verifyAfterSign
+
+/-- The additional data of attempt `counter` in Bitcoin Core's low-R grinding:
+`counter` as a 32-bit little-endian integer, followed by 28 zero bytes. -/
+def grindEntropy (counter : Nat) : ByteArray :=
+  ByteArray.mk #[counter.toUInt8, (counter >>> 8).toUInt8, (counter >>> 16).toUInt8,
+    (counter >>> 24).toUInt8] ++ ByteArray.replicate 28 0
+
+/-- The grinding loop of `signHashLowR`, from attempt `counter` on, for at most
+`fuel` attempts. Attempt `0` uses no additional data. -/
+def grindLowR (sk : PrivateKey) (h : ByteArray) (counter : Nat) : Nat → Option Signature
+  | 0 => none
+  | fuel + 1 =>
+    match sk.signHash h true (if counter = 0 then .empty else grindEntropy counter) with
+    | none => none
+    | some sig => if sig.r < 2 ^ 255 then some sig else sk.grindLowR h (counter + 1) fuel
+
+/-- Sign a message digest as Bitcoin Core's `CKey::Sign` does: low-S, and
+ground for a low `r` (`r < 2²⁵⁵`), which keeps the DER encoding at most 70 bytes
+(`signHashLowR_toDER_size`). The first attempt is plain RFC 6979 (`signHash`); while
+`r ≥ 2²⁵⁵`, attempt `i = 1, 2, …` uses `grindEntropy i` as `extraEntropy`.
+Each attempt succeeds with probability about 1/2; after 256 failures the result
+is `none`.
+
+The number of attempts reveals only the top bit of `r` of discarded
+signatures. With `verifyAfterSign := true` (the default, as in Bitcoin Core) the
+result is verified before it is returned. -/
+def signHashLowR (sk : PrivateKey) (h : ByteArray) (verifyAfterSign : Bool := true) :
+    Option Signature :=
+  let sig? := sk.grindLowR h 0 256
+  if verifyAfterSign then sig?.filter (sk.publicKey.verifyHash h) else sig?
 
 end PrivateKey
 
